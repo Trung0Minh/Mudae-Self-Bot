@@ -11,6 +11,9 @@ MUDAE_BOT_ID = 432610292342587392
 # Regex for kakera in $im output (e.g., "Animanga roulette · **102** 💎")
 KAKERA_PATTERN = re.compile(r"(\d+)\s*💎")
 
+# Regex to detect a character roll (claimable)
+ROLL_INDICATOR_PATTERN = re.compile(r"React with any emoji to claim!", re.IGNORECASE)
+
 async def handle_mudae_message(bot, message):
     """Entry point for processing Mudae bot messages for potential claims or confirmations."""
     if message.author.id != MUDAE_BOT_ID:
@@ -19,7 +22,6 @@ async def handle_mudae_message(bot, message):
     # 1. Check for Confirmation Message
     content = message.content.lower()
     if "married" in content:
-        # Check if the bot's own name or display name is mentioned in this marriage confirmation
         user_names = [bot.user.name.lower()]
         if bot.user.display_name:
             user_names.append(bot.user.display_name.lower())
@@ -36,7 +38,7 @@ async def handle_mudae_message(bot, message):
             return
 
     # 2. Universal Button Clicker (Single Button Logic)
-    # Only click if there is EXACTLY one button (avoids $im navigation/help menus)
+    # Click immediately if there is exactly one button
     total_buttons = 0
     target_button = None
     if message.components:
@@ -47,11 +49,11 @@ async def handle_mudae_message(bot, message):
                     target_button = component
     
     if total_buttons == 1 and target_button:
-        logger.info(f"SINGLE BUTTON DETECTED (Label: {target_button.label})! Clicking immediately...")
+        logger.info(f"BUTTON DETECTED! Clicking immediately...")
         try:
-            # Zero delay for buttons to win the race
             await target_button.click()
-            # Note: We don't return here because we might still want to react if it's a roll
+            # If we click a button, we don't need to do $im check
+            return 
         except Exception as e:
             logger.error(f"Failed to click button: {e}")
 
@@ -63,10 +65,8 @@ async def handle_mudae_message(bot, message):
     desc_lower = description.lower()
 
     # Identify if it's a Roll or an Info ($im) message
-    # Character rolls MUST have "claim!" and an image.
-    is_roll = "claim!" in desc_lower and embed.image
-    # Info messages (like $im) have "Animanga roulette" but no "claim!"
-    is_info = "animanga roulette" in desc_lower and not is_roll
+    is_roll = ROLL_INDICATOR_PATTERN.search(desc_lower) and embed.image
+    is_info = "animanga roulette" in desc_lower and not ROLL_INDICATOR_PATTERN.search(desc_lower)
 
     if is_roll:
         character_name = "Unknown"
@@ -77,40 +77,32 @@ async def handle_mudae_message(bot, message):
             
         logger.info(f"ROLL DETECTED: {character_name}")
 
-        # 3. Wishlist Check (Immediate Reaction - Can snipe from others!)
+        # 3. Wishlist Check (Immediate Reaction Fallback)
         if is_in_wishlist(bot, character_name):
-            logger.info(f"WISHLIST MATCH: {character_name}. Attempting immediate claim!")
+            logger.info(f"WISHLIST MATCH: {character_name}. Attempting immediate reaction!")
             await perform_claim(bot, message)
             return
 
-        # 4. Kakera Check via $im (Only for OUR rolls)
-        # Check if the roll was triggered by this account
+        # 4. Kakera Check via $im (Only for OUR rolls, only if no buttons were clicked)
         is_own_roll = False
         if message.interaction and message.interaction.user.id == bot.user.id:
             is_own_roll = True
         elif embed.footer and embed.footer.text:
-            # Mudae often puts "Rolled by [Name]" in the footer
             user_names = [bot.user.name.lower()]
             if bot.user.display_name:
                 user_names.append(bot.user.display_name.lower())
-            
             footer_text = embed.footer.text.lower()
             if any(name in footer_text for name in user_names):
                 is_own_roll = True
         
-        # Fallback: If we are currently in a rolling task, assume it's ours if no footer/interaction
         if not is_own_roll and bot.current_rolling_task and not bot.current_rolling_task.done():
             is_own_roll = True
 
         if is_own_roll:
-            logger.info(f"OWN ROLL DETECTED: {character_name}. Sending $im to check kakera...")
+            logger.info(f"OWN ROLL: {character_name}. Sending $im to check kakera...")
             bot.pending_kakera_checks[character_name.lower()] = message
-            
-            # Slow down the $im a bit (0.8s to 1.0s delay)
-            await human_delay((0.8, 1.0))
+            await human_delay((0.8, 1.2))
             await message.channel.send(f"$im {character_name}")
-        else:
-            logger.debug(f"Skipping kakera check for {character_name} (Rolled by someone else).")
         return
 
     if is_info:
@@ -125,7 +117,6 @@ async def handle_mudae_message(bot, message):
         if char_key in bot.pending_kakera_checks:
             original_roll_message = bot.pending_kakera_checks.pop(char_key)
             
-            # Extract Kakera from description
             kakera_value = 0
             match = KAKERA_PATTERN.search(description)
             if match:
@@ -135,10 +126,8 @@ async def handle_mudae_message(bot, message):
             min_kakera = claiming_cfg.get("min_kakera", 999999)
 
             if kakera_value >= min_kakera:
-                logger.info(f"KAKERA CHECK PASSED: {character_name} has {kakera_value} kakera (Min: {min_kakera}). Claiming original roll!")
+                logger.info(f"KAKERA CHECK PASSED: {character_name} ({kakera_value}). Claiming!")
                 await perform_claim(bot, original_roll_message)
-            else:
-                logger.info(f"KAKERA CHECK FAILED: {character_name} only has {kakera_value} kakera. Ignoring.")
 
 def is_in_wishlist(bot, name):
     claiming_cfg = bot.config.get("claiming", {})
@@ -146,10 +135,7 @@ def is_in_wishlist(bot, name):
     return name.lower() in wishlist
 
 async def perform_claim(bot, message):
-    # Reaction fallback (if buttons were missing or failed)
-    # Small jitter (0.15s to 0.4s)
     await human_delay((0.15, 0.4))
-    
     try:
         await message.add_reaction("❤️")
         logger.info("Claimed via reaction!")
