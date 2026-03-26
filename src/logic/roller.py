@@ -1,26 +1,34 @@
 import logging
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from src.utils.humanizer import human_delay
 from src.logic.timer_manager import check_timers
 
 logger = logging.getLogger(__name__)
 
 def get_current_interval_start(bot):
-    """Calculates the start time of the current 3-hour Mudae interval in UTC."""
-    cfg = bot.config.get("claiming", {})
-    interval_hours = cfg.get("claim_reset_interval", 3)
-    start_hour_utc = cfg.get("claim_reset_start", 0)
+    """Calculates the start time of the current Mudae claim interval in UTC."""
+    # Specific reset hours provided by the user
+    RESETS = [1, 4, 7, 11, 13, 16, 19, 22]
     
     now = datetime.now(timezone.utc)
-    # Total hours since the start_hour_utc
-    hours_since_start = (now.hour - start_hour_utc) % 24
-    # Find how many full intervals have passed
-    intervals_passed = hours_since_start // interval_hours
-    # Current interval start hour
-    current_interval_hour = (start_hour_utc + (intervals_passed * interval_hours)) % 24
+    current_hour = now.hour
     
-    return now.replace(hour=current_interval_hour, minute=0, second=0, microsecond=0)
+    # Handle wrap-around: if current hour is before the first reset (1 AM UTC),
+    # it belongs to the last reset of the previous day (22:00 UTC).
+    if current_hour < RESETS[0]:
+        prev_day = now - timedelta(days=1)
+        return prev_day.replace(hour=RESETS[-1], minute=0, second=0, microsecond=0)
+    
+    # Find the latest reset hour that is less than or equal to the current hour
+    interval_hour = RESETS[0]
+    for r in RESETS:
+        if r <= current_hour:
+            interval_hour = r
+        else:
+            break
+            
+    return now.replace(hour=interval_hour, minute=0, second=0, microsecond=0)
 
 async def perform_rolls(bot):
     """Sends a sequence of roll commands with humanized delays, checking for intervals."""
