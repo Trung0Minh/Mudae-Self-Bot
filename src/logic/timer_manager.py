@@ -12,15 +12,16 @@ MUDAE_BOT_ID = 432610292342587392
 ROLLS_PATTERN = re.compile(r"You have \*\*(\d+)\*\* rolls left")
 
 # Regex for Claim Ready
-# Matches "Your next claim is ready!" or "Married: **ready**"
-CLAIM_READY_PATTERN = re.compile(r"(Your next claim is ready!|Married: \*\*ready\*\*)")
+# Matches "you can claim right now!", "Your next claim is ready!", or "Married: **ready**"
+CLAIM_READY_PATTERN = re.compile(r"(you can claim right now!|Your next claim is ready!|Married: \*\*ready\*\*)")
 # Matches "you can't claim for another X min" or "Married: **Xh Xm**"
 CLAIM_NOT_READY_PATTERN = re.compile(r"(you can't claim for another|Married: \*\*\d+h \d+m\*\*)")
 
 # Regex for DK and Daily
-DK_READY_PATTERN = re.compile(r"(\$dk is ready!|Daily kakera: \*\*ready\*\*)")
-# Matches "Daily: **ready**" or "$daily is ready!"
-DAILY_READY_PATTERN = re.compile(r"(Daily: \*\*ready\*\*|\$daily is ready!)")
+# Matches "$dk is ready!", "Daily kakera: **ready**", or "Daily kakera is ready!"
+DK_READY_PATTERN = re.compile(r"(\$dk is ready!|Daily kakera: \*\*ready\*\*|Daily kakera is ready!)")
+# Matches "Daily: **ready**", "$daily is ready!", or "Daily is ready!"
+DAILY_READY_PATTERN = re.compile(r"(Daily: \*\*ready\*\*|\$daily is ready!|Daily is ready!)")
 
 async def check_timers(bot):
     """Sends $tu to the target channel to refresh roll count and claim status."""
@@ -29,8 +30,6 @@ async def check_timers(bot):
     
     if channel:
         logger.info("Checking timers ($tu)...")
-        # Reset internal claim flag before checking to ensure we get a fresh state
-        # Actually, let's NOT reset it here, let handle_timer_response update it.
         await channel.send("$tu")
 
 async def handle_timer_response(bot, message):
