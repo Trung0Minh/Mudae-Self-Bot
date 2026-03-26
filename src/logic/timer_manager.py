@@ -8,16 +8,16 @@ logger = logging.getLogger(__name__)
 # Mudae bot ID
 MUDAE_BOT_ID = 432610292342587392
 
-# Regex to find "You have X rolls left"
-ROLLS_PATTERN = re.compile(r"You have \*\*(\d+)\*\* rolls left")
+# Regex to find "You have X rolls left" - Handles optional bold/underline
+ROLLS_PATTERN = re.compile(r"You have (?:[\*_]+)?(\d+)(?:[\*_]+)? rolls left", re.IGNORECASE)
 
-# Regex for Claim Ready
-CLAIM_READY_PATTERN = re.compile(r"(you can claim right now!|Your next claim is ready!|Married: \*\*ready\*\*)")
-CLAIM_NOT_READY_PATTERN = re.compile(r"(you can't claim for another|Married: \*\*\d+h \d+m\*\*)")
+# Regex for Claim Status - Very flexible for underlines/bolds
+CLAIM_READY_PATTERN = re.compile(r"you (?:[\*_]+)?can(?:[\*_]+)? claim right now!", re.IGNORECASE)
+CLAIM_NOT_READY_PATTERN = re.compile(r"you (?:[\*_]+)?can't(?:[\*_]+)? claim for another", re.IGNORECASE)
 
-# Regex for DK and Daily
-DK_READY_PATTERN = re.compile(r"(\$dk is ready!|Daily kakera: \*\*ready\*\*|Daily kakera is ready!)")
-DAILY_READY_PATTERN = re.compile(r"(Daily: \*\*ready\*\*|\$daily is ready!|Daily is ready!)")
+# Regex for DK and Daily - Very flexible
+DK_READY_PATTERN = re.compile(r"(\$dk is ready!|Daily kakera: \*\*ready\*\*|Daily kakera is ready!)", re.IGNORECASE)
+DAILY_READY_PATTERN = re.compile(r"(Daily: \*\*ready\*\*|\$daily is ready!|Daily is ready!)", re.IGNORECASE)
 
 async def check_timers(bot):
     """Sends $tu to the target channel to refresh roll count and claim status."""
@@ -54,7 +54,7 @@ async def handle_timer_response(bot, message):
         bot.claim_ready = False
         logger.info("Claim is NOT ready according to $tu.")
 
-    # 3. Update DK and Daily Ready Flags (Don't send commands here)
+    # 3. Update DK and Daily Ready Flags
     if DK_READY_PATTERN.search(content):
         bot.dk_ready = True
         logger.info("DK is ready according to $tu.")

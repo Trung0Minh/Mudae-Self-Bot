@@ -28,7 +28,7 @@ async def perform_rolls(bot):
     """Unified roll sequence: $dk -> $daily -> (Rolls) -> $rolls -> (Extra Rolls)"""
     # 1. Check $tu first to refresh ALL states
     await check_timers(bot)
-    await asyncio.sleep(4) # Wait for response
+    await asyncio.sleep(6) # Increased wait for response
 
     # 2. Check if claim is even possible
     current_interval = get_current_interval_start(bot)
