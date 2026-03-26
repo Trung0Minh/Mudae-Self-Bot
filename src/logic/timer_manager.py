@@ -12,15 +12,11 @@ MUDAE_BOT_ID = 432610292342587392
 ROLLS_PATTERN = re.compile(r"You have \*\*(\d+)\*\* rolls left")
 
 # Regex for Claim Ready
-# Matches "you can claim right now!", "Your next claim is ready!", or "Married: **ready**"
 CLAIM_READY_PATTERN = re.compile(r"(you can claim right now!|Your next claim is ready!|Married: \*\*ready\*\*)")
-# Matches "you can't claim for another X min" or "Married: **Xh Xm**"
 CLAIM_NOT_READY_PATTERN = re.compile(r"(you can't claim for another|Married: \*\*\d+h \d+m\*\*)")
 
 # Regex for DK and Daily
-# Matches "$dk is ready!", "Daily kakera: **ready**", or "Daily kakera is ready!"
 DK_READY_PATTERN = re.compile(r"(\$dk is ready!|Daily kakera: \*\*ready\*\*|Daily kakera is ready!)")
-# Matches "Daily: **ready**", "$daily is ready!", or "Daily is ready!"
 DAILY_READY_PATTERN = re.compile(r"(Daily: \*\*ready\*\*|\$daily is ready!|Daily is ready!)")
 
 async def check_timers(bot):
@@ -58,16 +54,17 @@ async def handle_timer_response(bot, message):
         bot.claim_ready = False
         logger.info("Claim is NOT ready according to $tu.")
 
-    # 3. Handle DK Ready
+    # 3. Update DK and Daily Ready Flags (Don't send commands here)
     if DK_READY_PATTERN.search(content):
-        logger.info("DK is ready! Sending $dk...")
-        await human_delay((1.0, 2.0))
-        await message.channel.send("$dk")
+        bot.dk_ready = True
+        logger.info("DK is ready according to $tu.")
+    else:
+        bot.dk_ready = False
 
-    # 4. Handle Daily Ready
     if DAILY_READY_PATTERN.search(content):
-        logger.info("Daily is ready! Sending $daily...")
-        await human_delay((1.0, 2.0))
-        await message.channel.send("$daily")
+        bot.daily_ready = True
+        logger.info("Daily is ready according to $tu.")
+    else:
+        bot.daily_ready = False
 
     return rolls_match is not None or "claim" in content.lower()

@@ -8,89 +8,91 @@ logger = logging.getLogger(__name__)
 
 def get_current_interval_start(bot):
     """Calculates the start time of the current Mudae claim interval in UTC."""
-    # Specific reset hours provided by the user
     RESETS = [1, 4, 7, 11, 13, 16, 19, 22]
-    
     now = datetime.now(timezone.utc)
     current_hour = now.hour
     
-    # Handle wrap-around: if current hour is before the first reset (1 AM UTC),
-    # it belongs to the last reset of the previous day (22:00 UTC).
     if current_hour < RESETS[0]:
         prev_day = now - timedelta(days=1)
         return prev_day.replace(hour=RESETS[-1], minute=0, second=0, microsecond=0)
     
-    # Find the latest reset hour that is less than or equal to the current hour
     interval_hour = RESETS[0]
     for r in RESETS:
         if r <= current_hour:
             interval_hour = r
         else:
             break
-            
     return now.replace(hour=interval_hour, minute=0, second=0, microsecond=0)
 
 async def perform_rolls(bot):
-    """Sends a sequence of roll commands with humanized delays, checking for intervals."""
-    # 1. Backup Check: Check if we already claimed in this interval (internal state)
+    """Unified roll sequence: $dk -> $daily -> (Rolls) -> $rolls -> (Extra Rolls)"""
+    # 1. Check $tu first to refresh ALL states
+    await check_timers(bot)
+    await asyncio.sleep(4) # Wait for response
+
+    # 2. Check if claim is even possible
     current_interval = get_current_interval_start(bot)
     if bot.last_claim_interval_start == current_interval:
-        logger.info(f"Skipping rolls: Already claimed in this interval ({current_interval.strftime('%H:%M')} UTC).")
-        return
-
-    # 2. Source of Truth Check: Check $tu
-    await check_timers(bot)
-    # Wait up to 5 seconds for Mudae to respond and the bot to parse the status
-    for _ in range(5):
-        # We check both available_rolls and the claim_ready flag
-        # (Even if rolls are 0, we want to see if claim is ready)
-        await asyncio.sleep(1)
-        # If we successfully parsed a response, we stop waiting
-        # We'll know we parsed it if available_rolls was updated or claim_ready was set
-        # Actually, let's just wait the full time to be safe or check a specific flag.
-        pass
+        logger.info(f"Already claimed in this interval ({current_interval.strftime('%H:%M')} UTC).")
+        # Even if we claimed, we might want to do $dk/$daily? 
+        # But usually we only roll if we can claim.
+        if not bot.config.get("roll_without_claim", False):
+            return
 
     if not bot.claim_ready:
-        logger.info("CLAIM NOT READY according to $tu. Skipping rolls for this hour.")
-        return
-
-    if bot.available_rolls <= 0:
-        logger.info("No rolls available according to $tu. Skipping.")
+        logger.info("Claim not ready according to $tu. Skipping.")
         return
 
     channel_id = bot.target_channel_id
     channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
     if not channel:
-        logger.error(f"Could not find channel {channel_id}.")
         return
 
+    # 3. Handle DK and Daily (The start of the sequence)
+    used_daily = False
+    if bot.dk_ready:
+        logger.info("Sequence: Sending $dk")
+        await channel.send("$dk")
+        await human_delay((1.5, 3.0))
+
+    if bot.daily_ready:
+        logger.info("Sequence: Sending $daily")
+        await channel.send("$daily")
+        used_daily = True
+        await human_delay((2.0, 4.0))
+
+    # 4. Perform Initial Rolls (from the hour reset)
     roll_cmd = bot.config.get("roll_command", "$wa")
     num_rolls = bot.available_rolls
     
-    # Delay at the very start of the hour
-    start_delay_range = bot.config.get("timing", {}).get("start_delay_range", [1.0, 5.0])
-    await human_delay(start_delay_range)
+    if num_rolls > 0:
+        logger.info(f"Sequence: Starting {num_rolls} initial rolls")
+        bot.current_rolling_task = asyncio.current_task()
+        try:
+            for i in range(num_rolls):
+                await channel.send(roll_cmd)
+                bot.available_rolls -= 1
+                if i < num_rolls - 1:
+                    await human_delay((1.5, 2.5))
+        except asyncio.CancelledError:
+            logger.info("Roll sequence cancelled (Claimed!).")
+            return
 
-    roll_delay_range = bot.config.get("timing", {}).get("roll_delay_range", [1.5, 2.5])
+    # 5. Extra Rolls (if $daily was used)
+    if used_daily:
+        logger.info("Sequence: Daily was used, requesting extra rolls via $rolls")
+        await channel.send("$rolls")
+        # Delay for Mudae to confirm $rolls
+        await human_delay((3.0, 5.0))
+        
+        logger.info("Sequence: Starting 10 extra rolls from $daily")
+        try:
+            for i in range(10):
+                await channel.send(roll_cmd)
+                if i < 9:
+                    await human_delay((1.5, 2.5))
+        except asyncio.CancelledError:
+            logger.info("Extra roll sequence cancelled (Claimed!).")
+            return
 
-    logger.info(f"Starting {num_rolls} rolls with command '{roll_cmd}'...")
-    
-    # Store this task so we can cancel it if we claim
-    bot.current_rolling_task = asyncio.current_task()
-
-    try:
-        for i in range(num_rolls):
-            logger.debug(f"Sending roll {i+1}/{num_rolls}")
-            await channel.send(roll_cmd)
-            bot.available_rolls -= 1
-            
-            if i < num_rolls - 1:
-                await human_delay(roll_delay_range)
-    except asyncio.CancelledError:
-        logger.info("Roll sequence CANCELLED (Claim successful!).")
-    except Exception as e:
-        logger.error(f"Error during roll sequence: {e}")
-    finally:
-        bot.available_rolls = 0 
-        bot.current_rolling_task = None
-        logger.info(f"Finished roll sequence for this hour.")
+    logger.info("Unified roll sequence finished.")

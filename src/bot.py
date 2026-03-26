@@ -25,6 +25,9 @@ class MudaeBot(commands.Bot):
         self.pending_kakera_checks = {}
         # Tracks if Mudae says our claim is ready
         self.claim_ready = False
+        # Flags for daily commands
+        self.dk_ready = False
+        self.daily_ready = False
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
