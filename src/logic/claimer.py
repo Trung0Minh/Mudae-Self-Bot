@@ -77,16 +77,40 @@ async def handle_mudae_message(bot, message):
             
         logger.info(f"ROLL DETECTED: {character_name}")
 
-        # 3. Wishlist Check (Immediate Reaction)
+        # 3. Wishlist Check (Immediate Reaction - Can snipe from others!)
         if is_in_wishlist(bot, character_name):
             logger.info(f"WISHLIST MATCH: {character_name}. Attempting immediate claim!")
             await perform_claim(bot, message)
             return
 
-        # 4. Kakera Check via $im (Not in wishlist)
-        logger.info(f"NOT IN WISHLIST: {character_name}. Sending $im to check kakera...")
-        bot.pending_kakera_checks[character_name.lower()] = message
-        await message.channel.send(f"$im {character_name}")
+        # 4. Kakera Check via $im (Only for OUR rolls)
+        # Check if the roll was triggered by this account
+        is_own_roll = False
+        if message.interaction and message.interaction.user.id == bot.user.id:
+            is_own_roll = True
+        elif embed.footer and embed.footer.text:
+            # Mudae often puts "Rolled by [Name]" in the footer
+            user_names = [bot.user.name.lower()]
+            if bot.user.display_name:
+                user_names.append(bot.user.display_name.lower())
+            
+            footer_text = embed.footer.text.lower()
+            if any(name in footer_text for name in user_names):
+                is_own_roll = True
+        
+        # Fallback: If we are currently in a rolling task, assume it's ours if no footer/interaction
+        if not is_own_roll and bot.current_rolling_task and not bot.current_rolling_task.done():
+            is_own_roll = True
+
+        if is_own_roll:
+            logger.info(f"OWN ROLL DETECTED: {character_name}. Sending $im to check kakera...")
+            bot.pending_kakera_checks[character_name.lower()] = message
+            
+            # Slow down the $im a bit (0.8s to 1.0s delay)
+            await human_delay((0.8, 1.0))
+            await message.channel.send(f"$im {character_name}")
+        else:
+            logger.debug(f"Skipping kakera check for {character_name} (Rolled by someone else).")
         return
 
     if is_info:
