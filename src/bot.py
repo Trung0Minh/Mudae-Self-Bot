@@ -23,6 +23,8 @@ class MudaeBot(commands.Bot):
         self.available_rolls = 0
         # Tracks pending $im checks: {character_name_lower: original_roll_message}
         self.pending_kakera_checks = {}
+        # Tracks if Mudae says our claim is ready
+        self.claim_ready = False
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")

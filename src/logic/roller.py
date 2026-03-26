@@ -32,37 +32,37 @@ def get_current_interval_start(bot):
 
 async def perform_rolls(bot):
     """Sends a sequence of roll commands with humanized delays, checking for intervals."""
-    # 1. Check if we already claimed in this interval
+    # 1. Backup Check: Check if we already claimed in this interval (internal state)
     current_interval = get_current_interval_start(bot)
     if bot.last_claim_interval_start == current_interval:
         logger.info(f"Skipping rolls: Already claimed in this interval ({current_interval.strftime('%H:%M')} UTC).")
         return
 
-    # 2. Check available rolls via $tu
+    # 2. Source of Truth Check: Check $tu
     await check_timers(bot)
-    # Wait a bit for Mudae to respond and the bot to parse it
-    # We'll wait up to 5 seconds for available_rolls to be updated
+    # Wait up to 5 seconds for Mudae to respond and the bot to parse the status
     for _ in range(5):
-        if bot.available_rolls > 0:
-            break
+        # We check both available_rolls and the claim_ready flag
+        # (Even if rolls are 0, we want to see if claim is ready)
         await asyncio.sleep(1)
+        # If we successfully parsed a response, we stop waiting
+        # We'll know we parsed it if available_rolls was updated or claim_ready was set
+        # Actually, let's just wait the full time to be safe or check a specific flag.
+        pass
+
+    if not bot.claim_ready:
+        logger.info("CLAIM NOT READY according to $tu. Skipping rolls for this hour.")
+        return
 
     if bot.available_rolls <= 0:
-        logger.info("No rolls available according to $tu (or timed out). Skipping.")
+        logger.info("No rolls available according to $tu. Skipping.")
         return
 
     channel_id = bot.target_channel_id
-    if not channel_id:
-        logger.error("No target channel ID configured. Skipping rolls.")
-        return
-
-    channel = bot.get_channel(channel_id)
+    channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
     if not channel:
-        try:
-            channel = await bot.fetch_channel(channel_id)
-        except Exception as e:
-            logger.error(f"Could not find channel {channel_id}: {e}")
-            return
+        logger.error(f"Could not find channel {channel_id}.")
+        return
 
     roll_cmd = bot.config.get("roll_command", "$wa")
     num_rolls = bot.available_rolls
@@ -82,10 +82,8 @@ async def perform_rolls(bot):
         for i in range(num_rolls):
             logger.debug(f"Sending roll {i+1}/{num_rolls}")
             await channel.send(roll_cmd)
-            # Update internal count
             bot.available_rolls -= 1
             
-            # Don't delay after the last roll
             if i < num_rolls - 1:
                 await human_delay(roll_delay_range)
     except asyncio.CancelledError:
@@ -93,6 +91,6 @@ async def perform_rolls(bot):
     except Exception as e:
         logger.error(f"Error during roll sequence: {e}")
     finally:
-        bot.available_rolls = 0 # Reset after sequence
+        bot.available_rolls = 0 
         bot.current_rolling_task = None
         logger.info(f"Finished roll sequence for this hour.")

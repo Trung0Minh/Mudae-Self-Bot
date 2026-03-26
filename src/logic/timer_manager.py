@@ -10,16 +10,27 @@ MUDAE_BOT_ID = 432610292342587392
 
 # Regex to find "You have X rolls left"
 ROLLS_PATTERN = re.compile(r"You have \*\*(\d+)\*\* rolls left")
-# Regex to find "Daily: ready"
-DAILY_PATTERN = re.compile(r"Daily: \*\*(ready)\*\*")
+
+# Regex for Claim Ready
+# Matches "Your next claim is ready!" or "Married: **ready**"
+CLAIM_READY_PATTERN = re.compile(r"(Your next claim is ready!|Married: \*\*ready\*\*)")
+# Matches "you can't claim for another X min" or "Married: **Xh Xm**"
+CLAIM_NOT_READY_PATTERN = re.compile(r"(you can't claim for another|Married: \*\*\d+h \d+m\*\*)")
+
+# Regex for DK and Daily
+DK_READY_PATTERN = re.compile(r"(\$dk is ready!|Daily kakera: \*\*ready\*\*)")
+# Matches "Daily: **ready**" or "$daily is ready!"
+DAILY_READY_PATTERN = re.compile(r"(Daily: \*\*ready\*\*|\$daily is ready!)")
 
 async def check_timers(bot):
-    """Sends $tu to the target channel to refresh roll count and daily status."""
+    """Sends $tu to the target channel to refresh roll count and claim status."""
     channel_id = bot.target_channel_id
     channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
     
     if channel:
         logger.info("Checking timers ($tu)...")
+        # Reset internal claim flag before checking to ensure we get a fresh state
+        # Actually, let's NOT reset it here, let handle_timer_response update it.
         await channel.send("$tu")
 
 async def handle_timer_response(bot, message):
@@ -27,25 +38,37 @@ async def handle_timer_response(bot, message):
     if message.author.id != MUDAE_BOT_ID:
         return False
 
-    # Check if this is a $tu response (usually contains your username)
+    # Check if this is a $tu response
     content = ""
     if message.embeds:
         content = message.embeds[0].description or ""
     else:
         content = message.content
 
-    # Check for rolls count
+    # 1. Update Rolls Count
     rolls_match = ROLLS_PATTERN.search(content)
     if rolls_match:
         bot.available_rolls = int(rolls_match.group(1))
         logger.info(f"Updated available rolls: {bot.available_rolls}")
 
-    # Check for Daily ready
-    if DAILY_PATTERN.search(content):
+    # 2. Update Claim Status
+    if CLAIM_READY_PATTERN.search(content):
+        bot.claim_ready = True
+        logger.info("Claim is READY according to $tu.")
+    elif CLAIM_NOT_READY_PATTERN.search(content):
+        bot.claim_ready = False
+        logger.info("Claim is NOT ready according to $tu.")
+
+    # 3. Handle DK Ready
+    if DK_READY_PATTERN.search(content):
+        logger.info("DK is ready! Sending $dk...")
+        await human_delay((1.0, 2.0))
+        await message.channel.send("$dk")
+
+    # 4. Handle Daily Ready
+    if DAILY_READY_PATTERN.search(content):
         logger.info("Daily is ready! Sending $daily...")
         await human_delay((1.0, 2.0))
         await message.channel.send("$daily")
-        # After $daily, we might want to check $tu again to see new rolls
-        # but let's keep it simple for now.
 
-    return rolls_match is not None
+    return rolls_match is not None or "claim" in content.lower()
