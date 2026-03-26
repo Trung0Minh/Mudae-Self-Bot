@@ -28,14 +28,12 @@ async def perform_rolls(bot):
     """Unified roll sequence: $dk -> $daily -> (Rolls) -> $rolls -> (Extra Rolls)"""
     # 1. Check $tu first to refresh ALL states
     await check_timers(bot)
-    await asyncio.sleep(6) # Increased wait for response
+    await asyncio.sleep(6) # Wait for response
 
     # 2. Check if claim is even possible
     current_interval = get_current_interval_start(bot)
     if bot.last_claim_interval_start == current_interval:
         logger.info(f"Already claimed in this interval ({current_interval.strftime('%H:%M')} UTC).")
-        # Even if we claimed, we might want to do $dk/$daily? 
-        # But usually we only roll if we can claim.
         if not bot.config.get("roll_without_claim", False):
             return
 
@@ -48,51 +46,59 @@ async def perform_rolls(bot):
     if not channel:
         return
 
-    # 3. Handle DK and Daily (The start of the sequence)
-    used_daily = False
-    if bot.dk_ready:
-        logger.info("Sequence: Sending $dk")
-        await channel.send("$dk")
-        await human_delay((1.5, 3.0))
+    # Store this task early so claimer knows we are rolling
+    bot.current_rolling_task = asyncio.current_task()
 
-    if bot.daily_ready:
-        logger.info("Sequence: Sending $daily")
-        await channel.send("$daily")
-        used_daily = True
-        await human_delay((2.0, 4.0))
+    try:
+        # 3. Handle DK and Daily
+        used_daily = False
+        if bot.dk_ready:
+            logger.info("Sequence: Sending $dk")
+            await channel.send("$dk")
+            await human_delay((1.5, 3.0))
 
-    # 4. Perform Initial Rolls (from the hour reset)
-    roll_cmd = bot.config.get("roll_command", "$wa")
-    num_rolls = bot.available_rolls
-    
-    if num_rolls > 0:
-        logger.info(f"Sequence: Starting {num_rolls} initial rolls")
-        bot.current_rolling_task = asyncio.current_task()
-        try:
+        if bot.daily_ready:
+            logger.info("Sequence: Sending $daily")
+            await channel.send("$daily")
+            used_daily = True
+            await human_delay((2.0, 4.0))
+
+        # 4. Perform Initial Rolls
+        roll_cmd = bot.config.get("roll_command", "$wa")
+        num_rolls = bot.available_rolls
+        
+        if num_rolls > 0:
+            logger.info(f"Sequence: Starting {num_rolls} initial rolls")
             for i in range(num_rolls):
                 await channel.send(roll_cmd)
                 bot.available_rolls -= 1
+                # Even for the last roll, we wait a bit to keep the task active
                 if i < num_rolls - 1:
                     await human_delay((1.5, 2.5))
-        except asyncio.CancelledError:
-            logger.info("Roll sequence cancelled (Claimed!).")
-            return
+                else:
+                    # Small buffer after the last roll to catch the Mudae message
+                    await asyncio.sleep(2.0)
 
-    # 5. Extra Rolls (if $daily was used)
-    if used_daily:
-        logger.info("Sequence: Daily was used, requesting extra rolls via $rolls")
-        await channel.send("$rolls")
-        # Delay for Mudae to confirm $rolls
-        await human_delay((3.0, 5.0))
-        
-        logger.info("Sequence: Starting 10 extra rolls from $daily")
-        try:
+        # 5. Extra Rolls (if $daily was used)
+        if used_daily:
+            logger.info("Sequence: Daily was used, requesting extra rolls via $rolls")
+            await channel.send("$rolls")
+            await human_delay((3.0, 5.0))
+            
+            logger.info("Sequence: Starting 10 extra rolls from $daily")
             for i in range(10):
                 await channel.send(roll_cmd)
                 if i < 9:
                     await human_delay((1.5, 2.5))
-        except asyncio.CancelledError:
-            logger.info("Extra roll sequence cancelled (Claimed!).")
-            return
+                else:
+                    # Small buffer after the last roll to catch the Mudae message
+                    await asyncio.sleep(2.0)
 
-    logger.info("Unified roll sequence finished.")
+    except asyncio.CancelledError:
+        logger.info("Roll sequence cancelled (Claimed!).")
+    except Exception as e:
+        logger.error(f"Error during roll sequence: {e}")
+    finally:
+        bot.available_rolls = 0 
+        bot.current_rolling_task = None
+        logger.info("Unified roll sequence finished.")
