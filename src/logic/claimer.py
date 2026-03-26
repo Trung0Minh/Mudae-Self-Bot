@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 # Mudae bot ID
 MUDAE_BOT_ID = 432610292342587392
 
-# Regex to find kakera value in description (e.g., "507** (worth) **")
-KAKERA_PATTERN = re.compile(r"(\d+)\s*\*\*")
+# Regex for kakera in $im output (e.g., "Animanga roulette · **102** 💎")
+KAKERA_PATTERN = re.compile(r"(\d+)\s*💎")
 
 async def handle_mudae_message(bot, message):
     """Entry point for processing Mudae bot messages for potential claims or confirmations."""
@@ -35,67 +35,95 @@ async def handle_mudae_message(bot, message):
                 logger.info("Active roll sequence cancelled.")
             return
 
-    # 2. Universal Button Clicker (Instant Priority)
-    # If Mudae sends a button, it's either a claim or kakera. Just click it!
+    # 2. Universal Button Clicker (Single Button Logic)
+    # Only click if there is EXACTLY one button (avoids $im navigation/help menus)
+    total_buttons = 0
+    target_button = None
     if message.components:
         for row in message.components:
             for component in row.children:
                 if isinstance(component, discord.Button):
-                    logger.info("BUTTON DETECTED! Clicking immediately...")
-                    try:
-                        # Zero delay for buttons to win the race
-                        await component.click()
-                        return
-                    except Exception as e:
-                        logger.error(f"Failed to click button: {e}")
+                    total_buttons += 1
+                    target_button = component
+    
+    if total_buttons == 1 and target_button:
+        logger.info(f"SINGLE BUTTON DETECTED (Label: {target_button.label})! Clicking immediately...")
+        try:
+            # Zero delay for buttons to win the race
+            await target_button.click()
+            # Note: We don't return here because we might still want to react if it's a roll
+        except Exception as e:
+            logger.error(f"Failed to click button: {e}")
 
     if not message.embeds:
         return
 
     embed = message.embeds[0]
-
-    # 3. Parse Name (from Author or Title)
-    character_name = "Unknown"
-    if embed.author:
-        character_name = embed.author.name
-    elif embed.title:
-        character_name = embed.title
-
-    # 4. Parse Description (Series and Kakera)
     description = embed.description if embed.description else ""
-    
-    kakera_value = 0
-    match = KAKERA_PATTERN.search(description)
-    if match:
-        kakera_value = int(match.group(1))
+    desc_lower = description.lower()
 
-    # 5. Decision Logic for Marriage Claims (via Reaction fallback)
-    should_claim = check_if_should_claim(bot, character_name, description, kakera_value)
-    
-    if should_claim:
-        logger.info(f"MATCH FOUND: '{character_name}' ({kakera_value} kakera). Attempting reaction claim!")
-        await perform_claim(bot, message)
+    # Identify if it's a Roll or an Info ($im) message
+    # Character rolls MUST have "claim!" and an image.
+    is_roll = "claim!" in desc_lower and embed.image
+    # Info messages (like $im) have "Animanga roulette" but no "claim!"
+    is_info = "animanga roulette" in desc_lower and not is_roll
 
-def check_if_should_claim(bot, name, description, kakera_value):
+    if is_roll:
+        character_name = "Unknown"
+        if embed.author:
+            character_name = embed.author.name
+        elif embed.title:
+            character_name = embed.title
+            
+        logger.info(f"ROLL DETECTED: {character_name}")
+
+        # 3. Wishlist Check (Immediate Reaction)
+        if is_in_wishlist(bot, character_name):
+            logger.info(f"WISHLIST MATCH: {character_name}. Attempting immediate claim!")
+            await perform_claim(bot, message)
+            return
+
+        # 4. Kakera Check via $im (Not in wishlist)
+        logger.info(f"NOT IN WISHLIST: {character_name}. Sending $im to check kakera...")
+        bot.pending_kakera_checks[character_name.lower()] = message
+        await message.channel.send(f"$im {character_name}")
+        return
+
+    if is_info:
+        # 5. Process $im Response
+        character_name = "Unknown"
+        if embed.author:
+            character_name = embed.author.name
+        elif embed.title:
+            character_name = embed.title
+        
+        char_key = character_name.lower()
+        if char_key in bot.pending_kakera_checks:
+            original_roll_message = bot.pending_kakera_checks.pop(char_key)
+            
+            # Extract Kakera from description
+            kakera_value = 0
+            match = KAKERA_PATTERN.search(description)
+            if match:
+                kakera_value = int(match.group(1))
+            
+            claiming_cfg = bot.config.get("claiming", {})
+            min_kakera = claiming_cfg.get("min_kakera", 999999)
+
+            if kakera_value >= min_kakera:
+                logger.info(f"KAKERA CHECK PASSED: {character_name} has {kakera_value} kakera (Min: {min_kakera}). Claiming original roll!")
+                await perform_claim(bot, original_roll_message)
+            else:
+                logger.info(f"KAKERA CHECK FAILED: {character_name} only has {kakera_value} kakera. Ignoring.")
+
+def is_in_wishlist(bot, name):
     claiming_cfg = bot.config.get("claiming", {})
-    
-    # Check wishlist
     wishlist = [w.lower() for w in claiming_cfg.get("wishlist", [])]
-    if name.lower() in wishlist:
-        logger.info(f"Character '{name}' is in wishlist!")
-        return True
-
-    # Check kakera threshold
-    min_kakera = claiming_cfg.get("min_kakera", 999999) # Default to high if not set
-    if kakera_value >= min_kakera:
-        logger.info(f"Character '{name}' value ({kakera_value}) exceeds threshold ({min_kakera})!")
-        return True
-    
-    return False
+    return name.lower() in wishlist
 
 async def perform_claim(bot, message):
-    # Reaction fallback (if buttons were missing)
-    # Very small jitter (0.15s to 0.4s)
+    # Reaction fallback (if buttons were missing or failed)
+    # Small jitter (0.15s to 0.4s)
     await human_delay((0.15, 0.4))
     
     try:

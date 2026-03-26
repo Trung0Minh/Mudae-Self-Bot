@@ -21,6 +21,8 @@ class MudaeBot(commands.Bot):
         self.current_rolling_task = None
         # Number of rolls available to use
         self.available_rolls = 0
+        # Tracks pending $im checks: {character_name_lower: original_roll_message}
+        self.pending_kakera_checks = {}
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
