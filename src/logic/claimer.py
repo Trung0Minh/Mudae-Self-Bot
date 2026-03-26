@@ -107,7 +107,7 @@ async def handle_mudae_message(bot, message):
             bot.pending_kakera_checks[character_name.lower()] = message
             
             # Slow down the $im a bit (0.8s to 1.0s delay)
-            await human_delay((1.0, 1.5))
+            await human_delay((0.8, 1.0))
             await message.channel.send(f"$im {character_name}")
         else:
             logger.debug(f"Skipping kakera check for {character_name} (Rolled by someone else).")

@@ -71,7 +71,7 @@ async def perform_rolls(bot):
     start_delay_range = bot.config.get("timing", {}).get("start_delay_range", [1.0, 5.0])
     await human_delay(start_delay_range)
 
-    roll_delay_range = bot.config.get("timing", {}).get("roll_delay_range", [0.5, 2.5])
+    roll_delay_range = bot.config.get("timing", {}).get("roll_delay_range", [1.5, 2.5])
 
     logger.info(f"Starting {num_rolls} rolls with command '{roll_cmd}'...")
     
