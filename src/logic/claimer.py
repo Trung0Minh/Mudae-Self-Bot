@@ -135,7 +135,7 @@ def is_in_wishlist(bot, name):
     return name.lower() in wishlist
 
 async def perform_claim(bot, message):
-    await human_delay((0.15, 0.4))
+    await human_delay((0.7, 1.3)) # Increased delay to appear more human
     try:
         await message.add_reaction("❤️")
         logger.info("Claimed via reaction!")
