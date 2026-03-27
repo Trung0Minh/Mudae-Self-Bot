@@ -24,6 +24,25 @@ def get_current_interval_start(bot):
             break
     return now.replace(hour=interval_hour, minute=0, second=0, microsecond=0)
 
+def is_last_hour_of_interval():
+    """Checks if the current UTC hour is the last one before a claim reset."""
+    RESETS = [1, 4, 7, 11, 13, 16, 19, 22]
+    now = datetime.now(timezone.utc)
+    current_hour = now.hour
+    
+    # Find the next reset
+    next_reset = RESETS[0]
+    for r in RESETS:
+        if r > current_hour:
+            next_reset = r
+            break
+    
+    # If current_hour is 0 and RESETS[0] is 1, then 0 is the last hour
+    if current_hour == 0 and next_reset == 1:
+        return True
+    
+    return current_hour == (next_reset - 1)
+
 async def perform_rolls(bot):
     """Unified roll sequence: $dk -> $daily -> (Rolls) -> $rolls -> (Extra Rolls)"""
     # 1. Check $tu first to refresh ALL states
@@ -48,6 +67,11 @@ async def perform_rolls(bot):
 
     # Store this task early so claimer knows we are rolling
     bot.current_rolling_task = asyncio.current_task()
+    bot.current_sequence_rolls = [] # Reset for this sequence
+    
+    is_last_hour = is_last_hour_of_interval()
+    if is_last_hour:
+        logger.info("LAST HOUR before reset! Enabling best-of-sequence fallback.")
 
     try:
         # 3. Handle DK and Daily
@@ -72,12 +96,10 @@ async def perform_rolls(bot):
             for i in range(num_rolls):
                 await channel.send(roll_cmd)
                 bot.available_rolls -= 1
-                # Even for the last roll, we wait a bit to keep the task active
                 if i < num_rolls - 1:
                     await human_delay((1.5, 2.5))
                 else:
-                    # Small buffer after the last roll to catch the Mudae message
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(3.0) # Buffer for last $im
 
         # 5. Extra Rolls (if $daily was used)
         if used_daily:
@@ -91,8 +113,31 @@ async def perform_rolls(bot):
                 if i < 9:
                     await human_delay((1.5, 2.5))
                 else:
-                    # Small buffer after the last roll to catch the Mudae message
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(4.0) # Longer buffer after final roll
+
+        # 6. Final Last-Hour Check
+        if is_last_hour and bot.last_claim_interval_start != current_interval:
+            if bot.current_sequence_rolls:
+                # Find the roll with the highest kakera value
+                best_roll = max(bot.current_sequence_rolls, key=lambda x: x["kakera"])
+                logger.info(f"LAST HOUR FALLBACK: Claiming best available character: {best_roll['name']} ({best_roll['kakera']} kakera)")
+                from src.logic.claimer import perform_claim
+                await perform_claim(bot, best_roll["message"])
+                
+                # --- DIVORCE FOR KAKERA ---
+                # Wait for claim to process and Mudae to confirm "married" (about 6-8 seconds is safe)
+                await asyncio.sleep(8.0)
+                
+                # Clean name for $divorce command (e.g. "Rem (Re:Zero)" -> "Rem")
+                clean_name = best_roll["name"].split(" (")[0].split(" - ")[0].strip()
+                logger.info(f"LAST HOUR FALLBACK: Divorcing {clean_name} to collect kakera...")
+                
+                await channel.send(f"$divorce {clean_name}")
+                await asyncio.sleep(2.5) # Wait for Mudae's confirmation request
+                await channel.send("y")
+                logger.info(f"Divorce confirmation sent for {clean_name}.")
+            else:
+                logger.info("LAST HOUR FALLBACK: No rolls were captured in this sequence.")
 
     except asyncio.CancelledError:
         logger.info("Roll sequence cancelled (Claimed!).")
@@ -101,4 +146,5 @@ async def perform_rolls(bot):
     finally:
         bot.available_rolls = 0 
         bot.current_rolling_task = None
+        bot.current_sequence_rolls = []
         logger.info("Unified roll sequence finished.")

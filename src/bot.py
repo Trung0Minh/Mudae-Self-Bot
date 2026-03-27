@@ -23,6 +23,8 @@ class MudaeBot(commands.Bot):
         self.available_rolls = 0
         # Tracks pending $im checks: {character_name_lower: original_roll_message}
         self.pending_kakera_checks = {}
+        # Tracks all rolls in the current sequence for last-hour fallback
+        self.current_sequence_rolls = []
         # Tracks if Mudae says our claim is ready
         self.claim_ready = False
         # Flags for daily commands

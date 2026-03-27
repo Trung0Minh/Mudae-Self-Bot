@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 # Mudae bot ID
 MUDAE_BOT_ID = 432610292342587392
 
-# Regex for kakera in $im output (e.g., "Animanga roulette · **102** 💎")
-KAKERA_PATTERN = re.compile(r"(\d+)\s*💎")
+# Regex for kakera in $im output - looks for "Animanga roulette" followed by the value
+KAKERA_PATTERN = re.compile(r"Animanga roulette\D+(\d+)", re.IGNORECASE)
 
 # Regex to detect a character roll (claimable)
 ROLL_INDICATOR_PATTERN = re.compile(r"React with any emoji to claim!", re.IGNORECASE)
@@ -63,10 +63,14 @@ async def handle_mudae_message(bot, message):
     embed = message.embeds[0]
     description = embed.description if embed.description else ""
     desc_lower = description.lower()
+    
+    # Check fields as well for "Animanga roulette"
+    fields_text = " ".join([f.value for f in embed.fields]).lower() if embed.fields else ""
+    full_text_lower = desc_lower + " " + fields_text
 
     # Identify if it's a Roll or an Info ($im) message
     is_roll = ROLL_INDICATOR_PATTERN.search(desc_lower) and embed.image
-    is_info = "animanga roulette" in desc_lower and not ROLL_INDICATOR_PATTERN.search(desc_lower)
+    is_info = "animanga roulette" in full_text_lower and not ROLL_INDICATOR_PATTERN.search(desc_lower)
 
     if is_roll:
         character_name = "Unknown"
@@ -99,10 +103,12 @@ async def handle_mudae_message(bot, message):
             is_own_roll = True
 
         if is_own_roll:
-            logger.info(f"OWN ROLL: {character_name}. Sending $im to check kakera...")
-            bot.pending_kakera_checks[character_name.lower()] = message
+            # Clean character name for $im (remove series or extra info if present)
+            clean_name = character_name.split(" - ")[0].split(" (")[0].strip()
+            logger.info(f"OWN ROLL: {character_name}. Sending $im '{clean_name}' to check kakera...")
+            bot.pending_kakera_checks[clean_name.lower()] = message
             await human_delay((0.8, 1.2))
-            await message.channel.send(f"$im {character_name}")
+            await message.channel.send(f"$im {clean_name}")
         return
 
     if is_info:
@@ -113,21 +119,45 @@ async def handle_mudae_message(bot, message):
         elif embed.title:
             character_name = embed.title
         
-        char_key = character_name.lower()
-        if char_key in bot.pending_kakera_checks:
-            original_roll_message = bot.pending_kakera_checks.pop(char_key)
-            
+        # Normalize the name from the $im message
+        clean_char_name = character_name.split(" - ")[0].split(" (")[0].strip().lower()
+        logger.info(f"INFO MESSAGE for '{character_name}' (normalized: '{clean_char_name}')")
+        
+        # Try to find the original roll message
+        original_roll_message = None
+        if clean_char_name in bot.pending_kakera_checks:
+            original_roll_message = bot.pending_kakera_checks.pop(clean_char_name)
+        else:
+            # Fallback fuzzy match
+            for key in list(bot.pending_kakera_checks.keys()):
+                if key in clean_char_name or clean_char_name in key:
+                    original_roll_message = bot.pending_kakera_checks.pop(key)
+                    break
+
+        if original_roll_message:
             kakera_value = 0
-            match = KAKERA_PATTERN.search(description)
+            match = KAKERA_PATTERN.search(full_text_lower)
             if match:
                 kakera_value = int(match.group(1))
+            
+            # Save roll info for last-hour fallback
+            bot.current_sequence_rolls.append({
+                "name": character_name,
+                "kakera": kakera_value,
+                "message": original_roll_message
+            })
             
             claiming_cfg = bot.config.get("claiming", {})
             min_kakera = claiming_cfg.get("min_kakera", 999999)
 
+            logger.info(f"KAKERA EVALUATION: {character_name} = {kakera_value} kakera. (Threshold: {min_kakera})")
+
             if kakera_value >= min_kakera:
-                logger.info(f"KAKERA CHECK PASSED: {character_name} ({kakera_value}). Claiming!")
+                logger.info(f"CLAIMING: {character_name} ({kakera_value} >= {min_kakera})")
                 await perform_claim(bot, original_roll_message)
+            else:
+                logger.info(f"SKIPPING: {character_name} ({kakera_value} < {min_kakera})")
+
 
 def is_in_wishlist(bot, name):
     claiming_cfg = bot.config.get("claiming", {})
