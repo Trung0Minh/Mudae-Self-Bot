@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import pytz
 from datetime import datetime, timezone, timedelta
 from src.utils.humanizer import human_delay
 from src.logic.timer_manager import check_timers
@@ -7,28 +8,40 @@ from src.logic.timer_manager import check_timers
 logger = logging.getLogger(__name__)
 
 def get_current_interval_start(bot):
-    """Calculates the start time of the current Mudae claim interval in UTC."""
+    """Calculates the start time of the current Mudae claim interval in the configured timezone."""
     RESETS = [1, 4, 7, 11, 13, 16, 19, 22]
-    now = datetime.now(timezone.utc)
-    current_hour = now.hour
     
+    # Get timezone from config
+    tz_str = bot.config.get("timing", {}).get("timezone", "UTC")
+    tz = pytz.timezone(tz_str)
+    now_local = datetime.now(tz)
+    current_hour = now_local.hour
+    
+    # Find the reset hour that started this interval
     if current_hour < RESETS[0]:
-        prev_day = now - timedelta(days=1)
-        return prev_day.replace(hour=RESETS[-1], minute=0, second=0, microsecond=0)
-    
-    interval_hour = RESETS[0]
-    for r in RESETS:
-        if r <= current_hour:
-            interval_hour = r
-        else:
-            break
-    return now.replace(hour=interval_hour, minute=0, second=0, microsecond=0)
+        interval_hour = RESETS[-1]
+        # It started yesterday in local time
+        start_time = now_local - timedelta(days=1)
+    else:
+        interval_hour = RESETS[0]
+        for r in RESETS:
+            if r <= current_hour:
+                interval_hour = r
+            else:
+                break
+        start_time = now_local
+        
+    return start_time.replace(hour=interval_hour, minute=0, second=0, microsecond=0)
 
-def is_last_hour_of_interval():
-    """Checks if the current UTC hour is the last one before a claim reset."""
+def is_last_hour_of_interval(bot):
+    """Checks if the current hour in the configured timezone is the last one before a claim reset."""
     RESETS = [1, 4, 7, 11, 13, 16, 19, 22]
-    now = datetime.now(timezone.utc)
-    current_hour = now.hour
+    
+    # Get timezone from config
+    tz_str = bot.config.get("timing", {}).get("timezone", "UTC")
+    tz = pytz.timezone(tz_str)
+    now_local = datetime.now(tz)
+    current_hour = now_local.hour
     
     # Find the next reset
     next_reset = RESETS[0]
@@ -37,9 +50,9 @@ def is_last_hour_of_interval():
             next_reset = r
             break
     
-    # If current_hour is 0 and RESETS[0] is 1, then 0 is the last hour
-    if current_hour == 0 and next_reset == 1:
-        return True
+    # Special case for the very last reset of the day
+    if current_hour >= RESETS[-1]:
+        return current_hour == (24 + RESETS[0] - 1) # e.g. 23 if RESETS[0] is 0
     
     return current_hour == (next_reset - 1)
 
@@ -51,8 +64,8 @@ async def perform_rolls(bot):
 
     # 2. Check if claim is even possible
     current_interval = get_current_interval_start(bot)
-    if bot.last_claim_interval_start == current_interval:
-        logger.info(f"Already claimed in this interval ({current_interval.strftime('%H:%M')} UTC).")
+    if bot.last_claim_interval_start and bot.last_claim_interval_start == current_interval:
+        logger.info(f"Already claimed in this interval (Started at {current_interval.strftime('%H:%M')} {bot.config.get('timing', {}).get('timezone')}).")
         if not bot.config.get("roll_without_claim", False):
             return
 
@@ -69,7 +82,7 @@ async def perform_rolls(bot):
     bot.current_rolling_task = asyncio.current_task()
     bot.current_sequence_rolls = [] # Reset for this sequence
     
-    is_last_hour = is_last_hour_of_interval()
+    is_last_hour = is_last_hour_of_interval(bot)
     if is_last_hour:
         logger.info("LAST HOUR before reset! Enabling best-of-sequence fallback.")
 
