@@ -98,13 +98,22 @@ async def handle_mudae_message(bot, message):
             footer_text = embed.footer.text.lower()
             if any(name in footer_text for name in user_names):
                 is_own_roll = True
+        
+        # Smart Fallback: If we are rolling and there's no footer name (or name match failed), 
+        # it's likely our roll. If there IS a footer name and it didn't match us, it's definitely someone else's.
+        if not is_own_roll and bot.current_rolling_task and not bot.current_rolling_task.done():
+            if not embed.footer or not embed.footer.text:
+                is_own_roll = True
+            else:
+                # If there is footer text but we didn't match it above, it's someone else's
+                logger.debug(f"Roll detected during sequence, but footer '{embed.footer.text}' belongs to someone else.")
 
         if is_own_roll:
             # Use the full name provided by Mudae (preserving parentheses)
             clean_name = character_name.strip()
             logger.info(f"OWN ROLL: {character_name}. Sending $im '{clean_name}' to check kakera...")
             bot.pending_kakera_checks[clean_name.lower()] = message
-            await human_delay((0.8, 1.2))
+            await human_delay((0.5, 0.8))
             await message.channel.send(f"$im {clean_name}")
         return
 
