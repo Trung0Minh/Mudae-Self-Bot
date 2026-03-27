@@ -98,9 +98,6 @@ async def handle_mudae_message(bot, message):
             footer_text = embed.footer.text.lower()
             if any(name in footer_text for name in user_names):
                 is_own_roll = True
-        
-        if not is_own_roll and bot.current_rolling_task and not bot.current_rolling_task.done():
-            is_own_roll = True
 
         if is_own_roll:
             # Use the full name provided by Mudae (preserving parentheses)
