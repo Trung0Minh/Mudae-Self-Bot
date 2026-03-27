@@ -103,8 +103,8 @@ async def handle_mudae_message(bot, message):
             is_own_roll = True
 
         if is_own_roll:
-            # Clean character name for $im (remove series or extra info if present)
-            clean_name = character_name.split(" - ")[0].split(" (")[0].strip()
+            # Use the full name provided by Mudae (preserving parentheses)
+            clean_name = character_name.strip()
             logger.info(f"OWN ROLL: {character_name}. Sending $im '{clean_name}' to check kakera...")
             bot.pending_kakera_checks[clean_name.lower()] = message
             await human_delay((0.8, 1.2))
@@ -119,8 +119,8 @@ async def handle_mudae_message(bot, message):
         elif embed.title:
             character_name = embed.title
         
-        # Normalize the name from the $im message
-        clean_char_name = character_name.split(" - ")[0].split(" (")[0].strip().lower()
+        # Keep the full name for matching
+        clean_char_name = character_name.strip().lower()
         logger.info(f"INFO MESSAGE for '{character_name}' (normalized: '{clean_char_name}')")
         
         # Try to find the original roll message

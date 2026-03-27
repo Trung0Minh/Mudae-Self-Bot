@@ -125,17 +125,17 @@ async def perform_rolls(bot):
                 await perform_claim(bot, best_roll["message"])
                 
                 # --- DIVORCE FOR KAKERA ---
-                # Wait for claim to process and Mudae to confirm "married" (about 6-8 seconds is safe)
+                # Wait for claim to process and Mudae to confirm "married"
                 await asyncio.sleep(8.0)
                 
-                # Clean name for $divorce command (e.g. "Rem (Re:Zero)" -> "Rem")
-                clean_name = best_roll["name"].split(" (")[0].split(" - ")[0].strip()
-                logger.info(f"LAST HOUR FALLBACK: Divorcing {clean_name} to collect kakera...")
+                # Use the original name exactly as provided by Mudae (keeping parentheses)
+                original_name = best_roll["name"].strip()
+                logger.info(f"LAST HOUR FALLBACK: Divorcing '{original_name}' to collect kakera...")
                 
-                await channel.send(f"$divorce {clean_name}")
+                await channel.send(f"$divorce {original_name}")
                 await asyncio.sleep(2.5) # Wait for Mudae's confirmation request
                 await channel.send("y")
-                logger.info(f"Divorce confirmation sent for {clean_name}.")
+                logger.info(f"Divorce confirmation sent for '{original_name}'.")
             else:
                 logger.info("LAST HOUR FALLBACK: No rolls were captured in this sequence.")
 
