@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 def get_current_interval_start(bot):
     """Calculates the start time of the current Mudae claim interval in the configured timezone."""
-    RESETS = [1, 4, 7, 11, 13, 16, 19, 22]
+    RESETS = [1, 4, 7, 10, 13, 16, 19, 22]
     
     # Get timezone from config
     tz_str = bot.config.get("timing", {}).get("timezone", "UTC")
@@ -35,7 +35,7 @@ def get_current_interval_start(bot):
 
 def is_last_hour_of_interval(bot):
     """Checks if the current hour in the configured timezone is the last one before a claim reset."""
-    RESETS = [1, 4, 7, 11, 13, 16, 19, 22]
+    RESETS = [1, 4, 7, 10, 13, 16, 19, 22]
     
     # Get timezone from config
     tz_str = bot.config.get("timing", {}).get("timezone", "UTC")
