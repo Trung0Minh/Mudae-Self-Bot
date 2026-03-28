@@ -30,6 +30,8 @@ class MudaeBot(commands.Bot):
         # Flags for daily commands
         self.dk_ready = False
         self.daily_ready = False
+        # To prevent cancellation during the divorce sequence
+        self.is_divorcing = False
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")

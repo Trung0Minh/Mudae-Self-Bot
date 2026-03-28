@@ -31,10 +31,13 @@ async def handle_mudae_message(bot, message):
             from src.logic.roller import get_current_interval_start
             bot.last_claim_interval_start = get_current_interval_start(bot)
 
-            # Stop any active roll sequence immediately
+            # Stop any active roll sequence immediately, UNLESS we are in the middle of a divorce sequence
             if bot.current_rolling_task and not bot.current_rolling_task.done():
-                bot.current_rolling_task.cancel()
-                logger.info("Active roll sequence cancelled.")
+                if not bot.is_divorcing:
+                    bot.current_rolling_task.cancel()
+                    logger.info("Active roll sequence cancelled.")
+                else:
+                    logger.info("Claim confirmed during divorce sequence. Not cancelling task.")
             return
 
     # 2. Universal Button Clicker (Single Button Logic)
@@ -156,13 +159,21 @@ async def handle_mudae_message(bot, message):
             claiming_cfg = bot.config.get("claiming", {})
             min_kakera = claiming_cfg.get("min_kakera", 999999)
 
+            from src.logic.roller import is_last_hour_of_interval
+            is_last_hour = is_last_hour_of_interval(bot)
+
             logger.info(f"KAKERA EVALUATION: {character_name} = {kakera_value} kakera. (Threshold: {min_kakera})")
 
-            if kakera_value >= min_kakera:
-                logger.info(f"CLAIMING: {character_name} ({kakera_value} >= {min_kakera})")
-                await perform_claim(bot, original_roll_message)
+            # PATIENCE LOGIC: In last hour, we wait until the end of the sequence to pick the BEST one.
+            # We only claim immediately if it's NOT the last hour.
+            if not is_last_hour:
+                if kakera_value >= min_kakera:
+                    logger.info(f"CLAIMING: {character_name} ({kakera_value} >= {min_kakera})")
+                    await perform_claim(bot, original_roll_message)
+                else:
+                    logger.info(f"SKIPPING: {character_name} ({kakera_value} < {min_kakera})")
             else:
-                logger.info(f"SKIPPING: {character_name} ({kakera_value} < {min_kakera})")
+                logger.info(f"LAST HOUR PATIENCE: Saving {character_name} ({kakera_value} kakera) for later evaluation.")
 
 
 def is_in_wishlist(bot, name):

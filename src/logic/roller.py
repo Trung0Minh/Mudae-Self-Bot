@@ -133,22 +133,32 @@ async def perform_rolls(bot):
             if bot.current_sequence_rolls:
                 # Find the roll with the highest kakera value
                 best_roll = max(bot.current_sequence_rolls, key=lambda x: x["kakera"])
-                logger.info(f"LAST HOUR FALLBACK: Claiming best available character: {best_roll['name']} ({best_roll['kakera']} kakera)")
+                best_kakera = best_roll["kakera"]
+                best_name = best_roll["name"].strip()
+                
+                logger.info(f"LAST HOUR FALLBACK: Claiming best available character: {best_name} ({best_kakera} kakera)")
                 from src.logic.claimer import perform_claim
                 await perform_claim(bot, best_roll["message"])
                 
-                # --- DIVORCE FOR KAKERA ---
-                # Wait for claim to process and Mudae to confirm "married"
-                await asyncio.sleep(8.0)
-                
-                # Use the original name exactly as provided by Mudae (keeping parentheses)
-                original_name = best_roll["name"].strip()
-                logger.info(f"LAST HOUR FALLBACK: Divorcing '{original_name}' to collect kakera...")
-                
-                await channel.send(f"$divorce {original_name}")
-                await asyncio.sleep(2.5) # Wait for Mudae's confirmation request
-                await channel.send("y")
-                logger.info(f"Divorce confirmation sent for '{original_name}'.")
+                # --- DIVORCE FOR KAKERA (Under 200 Rule) ---
+                if best_kakera < 200:
+                    logger.info(f"KAKERA < 200 ({best_kakera}): Initiating divorce sequence...")
+                    
+                    # Prevent claimer from cancelling the task while we divorce
+                    bot.is_divorcing = True
+                    try:
+                        # Wait for claim to process and Mudae to confirm "married"
+                        await asyncio.sleep(8.0)
+                        
+                        logger.info(f"LAST HOUR FALLBACK: Divorcing '{best_name}' to collect kakera...")
+                        await channel.send(f"$divorce {best_name}")
+                        await asyncio.sleep(2.5) # Wait for Mudae's confirmation request
+                        await channel.send("y")
+                        logger.info(f"Divorce confirmation sent for '{best_name}'.")
+                    finally:
+                        bot.is_divorcing = False
+                else:
+                    logger.info(f"KAKERA >= 200 ({best_kakera}): Keeping character, no divorce.")
             else:
                 logger.info("LAST HOUR FALLBACK: No rolls were captured in this sequence.")
 
