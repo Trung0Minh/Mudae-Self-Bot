@@ -104,12 +104,18 @@ async def handle_mudae_message(bot, message):
         
         # Smart Fallback: If we are rolling and there's no footer name (or name match failed), 
         # it's likely our roll. If there IS a footer name and it didn't match us, it's definitely someone else's.
+        # EXCEPT if the footer contains "rolls left" which Mudae often uses as a warning.
         if not is_own_roll and bot.current_rolling_task and not bot.current_rolling_task.done():
             if not embed.footer or not embed.footer.text:
                 is_own_roll = True
             else:
-                # If there is footer text but we didn't match it above, it's someone else's
-                logger.debug(f"Roll detected during sequence, but footer '{embed.footer.text}' belongs to someone else.")
+                footer_text = embed.footer.text.lower()
+                if "rolls left" in footer_text or "roll left" in footer_text:
+                    logger.info("Roll warning detected in footer. Treating as OWN roll.")
+                    is_own_roll = True
+                else:
+                    # If there is footer text but we didn't match it above, it's someone else's
+                    logger.debug(f"Roll detected during sequence, but footer '{embed.footer.text}' belongs to someone else.")
 
         if is_own_roll:
             # Use the full name provided by Mudae (preserving parentheses)

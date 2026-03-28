@@ -93,9 +93,9 @@ async def perform_rolls(bot):
             logger.info("Sequence: Sending $dk")
             await channel.send("$dk")
             await human_delay((1.5, 3.0))
-
-        if bot.daily_ready:
-            logger.info("Sequence: Sending $daily")
+            
+            # Since $tu might not show $daily, we try sending it whenever $dk is ready
+            logger.info("Sequence: Sending $daily (triggered by $dk being ready)")
             await channel.send("$daily")
             used_daily = True
             await human_delay((2.0, 4.0))
