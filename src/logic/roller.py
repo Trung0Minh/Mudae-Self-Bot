@@ -60,22 +60,38 @@ async def perform_rolls(bot):
     """Unified roll sequence: $dk -> $daily -> (Rolls) -> $rolls -> (Extra Rolls)"""
     # 1. Check $tu first to refresh ALL states
     await check_timers(bot)
-    await asyncio.sleep(6) # Wait for response
+    
+    # Wait for response with multiple small checks to be more responsive
+    response_received = False
+    for i in range(15): # 15s total max wait
+        await asyncio.sleep(1)
+        if bot.available_rolls > 0 or bot.claim_ready: # Simple heuristic to see if we got an update
+            response_received = True
+            break
+            
+    if not response_received:
+        logger.warning("No $tu response detected after 15s. Proceeding with existing state.")
 
     # 2. Check if claim is even possible
     current_interval = get_current_interval_start(bot)
+    logger.debug(f"Current claim interval starts at: {current_interval.strftime('%Y-%m-%d %H:%M')}")
+
     if bot.last_claim_interval_start and bot.last_claim_interval_start == current_interval:
         logger.info(f"Already claimed in this interval (Started at {current_interval.strftime('%H:%M')} {bot.config.get('timing', {}).get('timezone')}).")
         if not bot.config.get("roll_without_claim", False):
+            logger.info("roll_without_claim is False. Ending sequence.")
             return
 
     if not bot.claim_ready:
-        logger.info("Claim not ready according to $tu. Skipping.")
-        return
+        logger.info("Claim is NOT ready according to Mudae. (If you just claimed, this is normal).")
+        if not bot.config.get("roll_without_claim", False):
+            logger.info("Skipping rolls because claim is not ready.")
+            return
 
     channel_id = bot.target_channel_id
     channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
     if not channel:
+        logger.error(f"Could not find target channel with ID {channel_id}")
         return
 
     # Store this task early so claimer knows we are rolling

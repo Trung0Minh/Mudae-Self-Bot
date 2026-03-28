@@ -35,22 +35,29 @@ class MudaeScheduler:
         
         is_last_hour = is_last_hour_of_interval(self.bot)
         if is_last_hour:
-            # DELAYED STRIKE: If it's the last hour, wait until minute 58
-            logger.info("LAST HOUR detected. Delaying roll sequence until minute 58 to maximize snipe uptime...")
-            
-            # Calculate sleep time until MM:58:00
+            # DELAYED STRIKE: Schedule a separate job for minute 58
             now = datetime.now(self.timezone)
             target_time = now.replace(minute=58, second=0, microsecond=0)
             
-            # If for some reason we are already past minute 58, don't sleep
             if target_time > now:
-                sleep_seconds = (target_time - now).total_seconds()
-                logger.info(f"Sleeping for {sleep_seconds:.1f} seconds until minute 58.")
-                await asyncio.sleep(sleep_seconds)
+                logger.info(f"LAST HOUR detected. Scheduling delayed strike at {target_time.strftime('%H:%M:%S')}...")
+                self.scheduler.add_job(
+                    self.perform_delayed_rolls,
+                    'date',
+                    run_date=target_time,
+                    id="delayed_strike"
+                )
+                return # Exit this trigger; the delayed job will handle the rolls
             else:
-                logger.info("Already past minute 58, starting rolls immediately.")
+                logger.info("LAST HOUR detected but already past minute 58. Starting rolls immediately.")
 
         logger.info("Triggering roll sequence...")
+        await perform_rolls(self.bot)
+
+    async def perform_delayed_rolls(self):
+        """Helper to run rolls after the delay."""
+        logger.info("DELAYED STRIKE WAKING UP: Starting roll sequence now!")
+        from src.logic.roller import perform_rolls
         await perform_rolls(self.bot)
 
     def shutdown(self):
