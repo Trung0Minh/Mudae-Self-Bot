@@ -110,7 +110,7 @@ async def perform_rolls(bot):
                 await channel.send(roll_cmd)
                 bot.available_rolls -= 1
                 if i < num_rolls - 1:
-                    await human_delay(3.0)
+                    await human_delay((2.0, 3.0))
                 else:
                     await asyncio.sleep(2.0) # Buffer for last $im
 
@@ -124,7 +124,7 @@ async def perform_rolls(bot):
             for i in range(10):
                 await channel.send(roll_cmd)
                 if i < 9:
-                    await human_delay((3.0, 5.0))
+                    await human_delay((2.0, 3.0))
                 else:
                     await asyncio.sleep(2.0) # Longer buffer after final roll
 

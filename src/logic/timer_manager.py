@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 # Mudae bot ID
 MUDAE_BOT_ID = 432610292342587392
 
-# Regex to find "You have X rolls left" - Handles optional bold/underline
-ROLLS_PATTERN = re.compile(r"You have (?:[\*_]+)?(\d+)(?:[\*_]+)? rolls left", re.IGNORECASE)
+# Regex to find "You have X rolls left" - Handles optional bold/underline and singular "roll"
+ROLLS_PATTERN = re.compile(r"You have (?:[\*_]+)?(\d+)(?:[\*_]+)? rolls? left", re.IGNORECASE)
 
 # Regex for Claim Status in $tu
 CLAIM_READY_PATTERN = re.compile(r"you (?:[\*_]+)?can(?:[\*_]+)? claim right now!", re.IGNORECASE)
@@ -33,12 +33,29 @@ async def handle_timer_response(bot, message):
     if message.author.id != MUDAE_BOT_ID:
         return False
 
-    # Check if this is a $tu response
+    # Check if this message is for US to avoid "State Confusion"
+    is_for_us = False
+    user_names = [bot.user.name.lower()]
+    if bot.user.display_name:
+        user_names.append(bot.user.display_name.lower())
+
     content = ""
     if message.embeds:
-        content = message.embeds[0].description or ""
+        embed = message.embeds[0]
+        content = embed.description or ""
+        # Mudae puts the username in the author field of the $tu embed
+        if embed.author and embed.author.name:
+            author_name = embed.author.name.lower()
+            if any(name in author_name for name in user_names):
+                is_for_us = True
     else:
         content = message.content
+        content_lower = content.lower()
+        if any(name in content_lower for name in user_names):
+            is_for_us = True
+
+    if not is_for_us:
+        return False
 
     # Only return True if it matches actual $tu info, to avoid swallowing rolls
     is_timer_info = False
