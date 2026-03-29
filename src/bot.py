@@ -30,6 +30,9 @@ class MudaeBot(commands.Bot):
         # Flags for daily commands
         self.dk_ready = False
         self.daily_ready = False
+        self.rolls_stock = 0
+        # Event to signal when a roll response is received from Mudae
+        self.roll_response_event = asyncio.Event()
         # To prevent cancellation during the divorce sequence
         self.is_divorcing = False
 

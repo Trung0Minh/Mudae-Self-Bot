@@ -56,6 +56,16 @@ def is_last_hour_of_interval(bot):
     
     return current_hour == (next_reset - 1)
 
+async def wait_for_mudae_response(bot, timeout=8.0):
+    """Waits for Mudae to respond to a roll ($wa, $im, etc)."""
+    try:
+        await asyncio.wait_for(bot.roll_response_event.wait(), timeout=timeout)
+        bot.roll_response_event.clear()
+        return True
+    except asyncio.TimeoutError:
+        logger.warning(f"Mudae response timeout after {timeout}s.")
+        return False
+
 async def perform_rolls(bot):
     """Unified roll sequence: $dk -> $daily -> (Rolls) -> $rolls -> (Extra Rolls)"""
     # 1. Check $tu first to refresh ALL states
@@ -104,16 +114,23 @@ async def perform_rolls(bot):
 
     try:
         # 3. Handle DK and Daily
-        used_daily = False
         if bot.dk_ready:
-            logger.info("Sequence: Sending $dk")
+            logger.info("Sequence: Sending $dk because it's ready")
             await channel.send("$dk")
             await human_delay((1.5, 3.0))
-            
-            # Since $tu might not show $daily, we try sending it whenever $dk is ready
-            logger.info("Sequence: Sending $daily (triggered by $dk being ready)")
+
+        if bot.daily_ready:
+            logger.info("Sequence: Sending $daily because it's ready")
             await channel.send("$daily")
-            used_daily = True
+            await human_delay((2.0, 4.0))
+
+        # 3b. Use Rolls Stock if available and NOT the last hour
+        used_stock = False
+        if bot.rolls_stock > 0 and not is_last_hour:
+            logger.info(f"Sequence: Using 1 roll reset from stock ({bot.rolls_stock} available)")
+            await channel.send("$rolls")
+            bot.rolls_stock -= 1
+            used_stock = True
             await human_delay((2.0, 4.0))
 
         # 4. Perform Initial Rolls
@@ -123,24 +140,37 @@ async def perform_rolls(bot):
         if num_rolls > 0:
             logger.info(f"Sequence: Starting {num_rolls} initial rolls")
             for i in range(num_rolls):
+                bot.roll_response_event.clear()
                 await channel.send(roll_cmd)
                 bot.available_rolls -= 1
+                
+                # Wait for Mudae to respond before next roll
+                if not await wait_for_mudae_response(bot):
+                    logger.warning(f"Roll {i+1} missed response. Moving to next.")
+                
                 if i < num_rolls - 1:
-                    await human_delay((2.0, 3.0))
+                    await human_delay((1.5, 2.5))
                 else:
                     await asyncio.sleep(2.0) # Buffer for last $im
 
-        # 5. Extra Rolls (if $daily was used)
-        if used_daily:
-            logger.info("Sequence: Daily was used, requesting extra rolls via $rolls")
-            await channel.send("$rolls")
-            await human_delay((3.0, 5.0))
+        # 5. Extra Rolls (if $daily or $rolls stock was used)
+        if bot.daily_ready or used_stock:
+            if bot.daily_ready:
+                logger.info("Sequence: Daily was used, requesting extra rolls via $rolls")
+                await channel.send("$rolls")
+                await human_delay((3.0, 5.0))
             
-            logger.info("Sequence: Starting 10 extra rolls from $daily")
+            logger.info("Sequence: Starting 10 extra rolls")
             for i in range(10):
+                bot.roll_response_event.clear()
                 await channel.send(roll_cmd)
+                
+                # Wait for Mudae to respond before next roll
+                if not await wait_for_mudae_response(bot):
+                    logger.warning(f"Extra Roll {i+1} missed response. Moving to next.")
+
                 if i < 9:
-                    await human_delay((2.0, 3.0))
+                    await human_delay((1.5, 2.5))
                 else:
                     await asyncio.sleep(2.0) # Longer buffer after final roll
 

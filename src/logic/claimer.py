@@ -75,6 +75,10 @@ async def handle_mudae_message(bot, message):
     is_roll = ROLL_INDICATOR_PATTERN.search(desc_lower) and embed.image
     is_info = "animanga roulette" in full_text_lower and not ROLL_INDICATOR_PATTERN.search(desc_lower)
 
+    if is_roll or is_info:
+        # Signal that we received a response for a roll (or $im check)
+        bot.roll_response_event.set()
+
     if is_roll:
         character_name = "Unknown"
         if embed.author:

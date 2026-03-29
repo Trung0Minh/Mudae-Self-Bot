@@ -11,13 +11,16 @@ MUDAE_BOT_ID = 432610292342587392
 # Regex to find "You have X rolls left" - Handles optional bold/underline and singular "roll"
 ROLLS_PATTERN = re.compile(r"You have (?:[\*_]+)?(\d+)(?:[\*_]+)? rolls? left", re.IGNORECASE)
 
+# Regex for Rolls in Stock
+ROLLS_STOCK_PATTERN = re.compile(r"You have (?:[\*_]+)?(\d+)(?:[\*_]+)? rolls? reset in stock", re.IGNORECASE)
+
 # Regex for Claim Status in $tu
 CLAIM_READY_PATTERN = re.compile(r"you (?:[\*_]+)?can(?:[\*_]+)? claim right now!", re.IGNORECASE)
 CLAIM_NOT_READY_PATTERN = re.compile(r"you (?:[\*_]+)?can't(?:[\*_]+)? claim for another", re.IGNORECASE)
 
 # Regex for DK and Daily
-DK_READY_PATTERN = re.compile(r"(\$dk is ready!|Daily kakera: \*\*ready\*\*|Daily kakera is ready!)", re.IGNORECASE)
-DAILY_READY_PATTERN = re.compile(r"(Daily: \*\*ready\*\*|\$daily is ready!|Daily is ready!)", re.IGNORECASE)
+DK_READY_PATTERN = re.compile(r"(\$dk is ready!|Daily kakera: \*\*ready\*\*|Daily kakera is ready!|\$dk is available!)", re.IGNORECASE)
+DAILY_READY_PATTERN = re.compile(r"(Daily: \*\*ready\*\*|\$daily is ready!|Daily is ready!|\$daily is available!)", re.IGNORECASE)
 
 async def check_timers(bot):
     """Sends $tu to the target channel to refresh roll count and claim status."""
@@ -65,6 +68,13 @@ async def handle_timer_response(bot, message):
     if rolls_match:
         bot.available_rolls = int(rolls_match.group(1))
         logger.info(f"Updated available rolls: {bot.available_rolls}")
+        is_timer_info = True
+
+    # 1b. Update Rolls Reset Stock
+    rolls_stock_match = ROLLS_STOCK_PATTERN.search(content)
+    if rolls_stock_match:
+        bot.rolls_stock = int(rolls_stock_match.group(1))
+        logger.info(f"Updated rolls reset stock: {bot.rolls_stock}")
         is_timer_info = True
 
     # 2. Update Claim Status
