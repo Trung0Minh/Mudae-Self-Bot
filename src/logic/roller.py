@@ -1,11 +1,17 @@
 import logging
 import asyncio
 import pytz
+import time
 from datetime import datetime, timezone, timedelta
 from src.utils.humanizer import human_delay
 from src.logic.timer_manager import check_timers
 
 logger = logging.getLogger(__name__)
+
+# Safety constants for the 30-second reaction window
+ROLL_STOP_LIMIT = 20.0      # Stop rolling after 20 seconds
+AUDIT_STOP_LIMIT = 24.0     # Stop waiting for $im after 24 seconds
+HARD_CLAIM_DEADLINE = 25.5  # Final deadline to send the claim reaction
 
 def get_current_interval_start(bot):
     """Calculates the start time of the current Mudae claim interval in the configured timezone."""
@@ -112,6 +118,9 @@ async def perform_rolls(bot):
     if is_last_hour:
         logger.info("LAST HOUR before reset! Enabling best-of-sequence fallback.")
 
+    # Start the stopwatch for the 30s reaction window
+    sequence_start_time = time.time()
+
     try:
         # 3. Handle DK and Daily
         if bot.dk_ready:
@@ -140,6 +149,12 @@ async def perform_rolls(bot):
         if num_rolls > 0:
             logger.info(f"Sequence: Starting {num_rolls} initial rolls")
             for i in range(num_rolls):
+                # LAST HOUR SAFETY: Stop rolling if we are past the limit
+                elapsed = time.time() - sequence_start_time
+                if is_last_hour and elapsed > ROLL_STOP_LIMIT:
+                    logger.warning(f"LAST HOUR SAFETY: Stopping rolls early at {elapsed:.1f}s to ensure claim.")
+                    break
+
                 bot.roll_response_event.clear()
                 await channel.send(roll_cmd)
                 bot.available_rolls -= 1
@@ -151,38 +166,69 @@ async def perform_rolls(bot):
                 if i < num_rolls - 1:
                     await human_delay((1.5, 2.5))
                 else:
-                    await asyncio.sleep(2.0) # Buffer for last $im
+                    await asyncio.sleep(1.0) # Minimal buffer
 
         # 5. Extra Rolls (if $daily or $rolls stock was used)
         if bot.daily_ready or used_stock:
-            if bot.daily_ready:
-                logger.info("Sequence: Daily was used, requesting extra rolls via $rolls")
-                await channel.send("$rolls")
-                await human_delay((3.0, 5.0))
-            
-            logger.info("Sequence: Starting 10 extra rolls")
-            for i in range(10):
-                bot.roll_response_event.clear()
-                await channel.send(roll_cmd)
+            # Check time again before starting extra rolls
+            elapsed = time.time() - sequence_start_time
+            if not is_last_hour or elapsed < ROLL_STOP_LIMIT:
+                if bot.daily_ready:
+                    logger.info("Sequence: Daily was used, requesting extra rolls via $rolls")
+                    await channel.send("$rolls")
+                    await human_delay((3.0, 5.0))
                 
-                # Wait for Mudae to respond before next roll
-                if not await wait_for_mudae_response(bot):
-                    logger.warning(f"Extra Roll {i+1} missed response. Moving to next.")
+                logger.info("Sequence: Starting 10 extra rolls")
+                for i in range(10):
+                    elapsed = time.time() - sequence_start_time
+                    if is_last_hour and elapsed > ROLL_STOP_LIMIT:
+                        logger.warning(f"LAST HOUR SAFETY: Stopping extra rolls early at {elapsed:.1f}s.")
+                        break
 
-                if i < 9:
-                    await human_delay((1.5, 2.5))
-                else:
-                    await asyncio.sleep(2.0) # Longer buffer after final roll
+                    bot.roll_response_event.clear()
+                    await channel.send(roll_cmd)
+                    
+                    # Wait for Mudae to respond before next roll
+                    if not await wait_for_mudae_response(bot):
+                        logger.warning(f"Extra Roll {i+1} missed response. Moving to next.")
 
-        # 6. Final Last-Hour Check
+                    if i < 9:
+                        await human_delay((1.5, 2.5))
+                    else:
+                        await asyncio.sleep(1.0)
+
+        # 6. Final Last-Hour Check and Claim
         if is_last_hour and bot.last_claim_interval_start != current_interval:
+            # --- AUDIT PHASE ---
+            # Wait for pending kakera checks to resolve, with a hard deadline
+            logger.info("LAST HOUR: Entering Audit Phase (waiting for pending kakera responses)...")
+            while bot.pending_kakera_checks:
+                elapsed = time.time() - sequence_start_time
+                if elapsed > AUDIT_STOP_LIMIT:
+                    logger.warning(f"LAST HOUR: Audit Phase timeout at {elapsed:.1f}s. Proceeding with known data.")
+                    # Optional: Retry $im for remaining pending checks once
+                    for char_name in list(bot.pending_kakera_checks.keys()):
+                        logger.info(f"AUDIT RETRY: Sending one final $im for '{char_name}'")
+                        await channel.send(f"$im {char_name}")
+                        await asyncio.sleep(0.5)
+                    break
+                await asyncio.sleep(0.5)
+
+            # --- HARD DEADLINE WAIT ---
+            # Wait until just before the hard deadline to catch any final responses
+            elapsed = time.time() - sequence_start_time
+            if elapsed < HARD_CLAIM_DEADLINE:
+                wait_time = HARD_CLAIM_DEADLINE - elapsed
+                logger.debug(f"LAST HOUR: Waiting {wait_time:.1f}s for final deadline sync.")
+                await asyncio.sleep(wait_time)
+
             if bot.current_sequence_rolls:
                 # Find the roll with the highest kakera value
                 best_roll = max(bot.current_sequence_rolls, key=lambda x: x["kakera"])
                 best_kakera = best_roll["kakera"]
                 best_name = best_roll["name"].strip()
                 
-                logger.info(f"LAST HOUR FALLBACK: Claiming best available character: {best_name} ({best_kakera} kakera)")
+                logger.info(f"LAST HOUR FINAL CHOICE: Claiming '{best_name}' ({best_kakera} kakera) out of {len(bot.current_sequence_rolls)} captured.")
                 from src.logic.claimer import perform_claim
                 await perform_claim(bot, best_roll["message"])
                 
@@ -190,21 +236,19 @@ async def perform_rolls(bot):
                 if best_kakera < 200:
                     logger.info(f"KAKERA < 200 ({best_kakera}): Initiating divorce sequence...")
                     
-                    # Prevent claimer from cancelling the task while we divorce
                     bot.is_divorcing = True
                     try:
                         # Wait for claim to process and Mudae to confirm "married"
                         await asyncio.sleep(8.0)
                         
-                        logger.info(f"LAST HOUR FALLBACK: Divorcing '{best_name}' to collect kakera...")
+                        logger.info(f"LAST HOUR DIVORCE: Divorcing '{best_name}'...")
                         await channel.send(f"$divorce {best_name}")
-                        await asyncio.sleep(2.5) # Wait for Mudae's confirmation request
+                        await asyncio.sleep(2.5)
                         await channel.send("y")
-                        logger.info(f"Divorce confirmation sent for '{best_name}'.")
                     finally:
                         bot.is_divorcing = False
                 else:
-                    logger.info(f"KAKERA >= 200 ({best_kakera}): Keeping character, no divorce.")
+                    logger.info(f"KAKERA >= 200 ({best_kakera}): Keeping character.")
             else:
                 logger.info("LAST HOUR FALLBACK: No rolls were captured in this sequence.")
 
@@ -216,4 +260,6 @@ async def perform_rolls(bot):
         bot.available_rolls = 0 
         bot.current_rolling_task = None
         bot.current_sequence_rolls = []
+        # Clear pending checks so they don't leak into the next hour
+        bot.pending_kakera_checks = {} 
         logger.info("Unified roll sequence finished.")
