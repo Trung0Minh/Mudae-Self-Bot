@@ -14,6 +14,52 @@ KAKERA_PATTERN = re.compile(r"Animanga roulette\D+(\d+)", re.IGNORECASE)
 # Regex to detect a character roll (claimable)
 ROLL_INDICATOR_PATTERN = re.compile(r"React with any emoji to claim!", re.IGNORECASE)
 
+def identify_roll_owner(bot, message):
+    """
+    Identifies the owner of a Mudae roll.
+    Returns: (user_id, is_own_roll)
+    """
+    is_own_roll = False
+    user_id = None
+
+    # Check Interaction (for slash commands/buttons)
+    if message.interaction:
+        user_id = message.interaction.user.id
+        if user_id == bot.user.id:
+            is_own_roll = True
+        return user_id, is_own_roll
+
+    # Check Embed Footer (for standard $wa rolls)
+    if message.embeds and message.embeds[0].footer and message.embeds[0].footer.text:
+        footer_text = message.embeds[0].footer.text.lower()
+        
+        # Check against our own name/display name
+        user_names = [bot.user.name.lower()]
+        if bot.user.display_name:
+            user_names.append(bot.user.display_name.lower())
+        
+        if any(name in footer_text for name in user_names):
+            is_own_roll = True
+            user_id = bot.user.id
+            return user_id, is_own_roll
+            
+        # Fallback: Extract the username from the footer (usually "Roll by User")
+        # Mudae usually formats footer as "Roll by Username" or "1/10" (for warnings)
+        if "roll by " in footer_text:
+            user_id = footer_text.split("roll by ")[1].strip()
+        elif "rolls left" in footer_text or "roll left" in footer_text:
+            # If it's a "rolls left" warning and we are currently rolling, it's likely ours
+            if bot.current_rolling_task and not bot.current_rolling_task.done():
+                is_own_roll = True
+                user_id = bot.user.id
+        
+    # Final Fallback: If we are rolling and there's no clear owner, assume it's ours
+    if not user_id and bot.current_rolling_task and not bot.current_rolling_task.done():
+        is_own_roll = True
+        user_id = bot.user.id
+
+    return user_id, is_own_roll
+
 async def handle_mudae_message(bot, message):
     """Entry point for processing Mudae bot messages for potential claims or confirmations."""
     if message.author.id != MUDAE_BOT_ID:
@@ -52,13 +98,23 @@ async def handle_mudae_message(bot, message):
                     target_button = component
     
     if total_buttons == 1 and target_button:
-        logger.info(f"BUTTON DETECTED! Clicking immediately...")
-        try:
-            await target_button.click()
-            # If we click a button, we don't need to do $im check
-            return 
-        except Exception as e:
-            logger.error(f"Failed to click button: {e}")
+        # --- SNIFFING FILTER ---
+        user_id, is_own_roll = identify_roll_owner(bot, message)
+        claiming_cfg = bot.config.get("claiming", {})
+        sniffing_enabled = claiming_cfg.get("sniffing_enabled", True)
+        blacklist = claiming_cfg.get("sniff_blacklist", [])
+
+        should_interact = is_own_roll or (sniffing_enabled and str(user_id) not in [str(b) for b in blacklist])
+
+        if should_interact:
+            logger.info(f"BUTTON DETECTED! Clicking immediately... (Owner: {user_id}, Own: {is_own_roll})")
+            try:
+                await target_button.click()
+                return 
+            except Exception as e:
+                logger.error(f"Failed to click button: {e}")
+        else:
+            logger.debug(f"Ignoring button roll from {user_id} (Sniffing disabled or blacklisted)")
 
     if not message.embeds:
         return
@@ -88,39 +144,25 @@ async def handle_mudae_message(bot, message):
             
         logger.info(f"ROLL DETECTED: {character_name}")
 
+        # --- SNIFFING FILTER ---
+        user_id, is_own_roll = identify_roll_owner(bot, message)
+        claiming_cfg = bot.config.get("claiming", {})
+        sniffing_enabled = claiming_cfg.get("sniffing_enabled", True)
+        blacklist = claiming_cfg.get("sniff_blacklist", [])
+        
+        should_interact = is_own_roll or (sniffing_enabled and str(user_id) not in [str(b) for b in blacklist])
+
+        if not should_interact:
+            logger.debug(f"Ignoring roll for {character_name} from {user_id} (Sniffing disabled or blacklisted)")
+            return
+
         # 3. Wishlist Check (Immediate Reaction Fallback)
         if is_in_wishlist(bot, character_name):
             logger.info(f"WISHLIST MATCH: {character_name}. Attempting immediate reaction!")
             await perform_claim(bot, message)
             return
 
-        # 4. Kakera Check via $im (Only for OUR rolls, only if no buttons were clicked)
-        is_own_roll = False
-        if message.interaction and message.interaction.user.id == bot.user.id:
-            is_own_roll = True
-        elif embed.footer and embed.footer.text:
-            user_names = [bot.user.name.lower()]
-            if bot.user.display_name:
-                user_names.append(bot.user.display_name.lower())
-            footer_text = embed.footer.text.lower()
-            if any(name in footer_text for name in user_names):
-                is_own_roll = True
-        
-        # Smart Fallback: If we are rolling and there's no footer name (or name match failed), 
-        # it's likely our roll. If there IS a footer name and it didn't match us, it's definitely someone else's.
-        # EXCEPT if the footer contains "rolls left" which Mudae often uses as a warning.
-        if not is_own_roll and bot.current_rolling_task and not bot.current_rolling_task.done():
-            if not embed.footer or not embed.footer.text:
-                is_own_roll = True
-            else:
-                footer_text = embed.footer.text.lower()
-                if "rolls left" in footer_text or "roll left" in footer_text:
-                    logger.info("Roll warning detected in footer. Treating as OWN roll.")
-                    is_own_roll = True
-                else:
-                    # If there is footer text but we didn't match it above, it's someone else's
-                    logger.debug(f"Roll detected during sequence, but footer '{embed.footer.text}' belongs to someone else.")
-
+        # 4. Kakera Check via $im (Only for OUR rolls)
         if is_own_roll:
             # Use the full name provided by Mudae (preserving parentheses)
             clean_name = character_name.strip()

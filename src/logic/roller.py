@@ -133,15 +133,6 @@ async def perform_rolls(bot):
             await channel.send("$daily")
             await human_delay((2.0, 4.0))
 
-        # 3b. Use Rolls Stock if available and NOT the last hour
-        used_stock = False
-        if bot.rolls_stock > 0 and not is_last_hour:
-            logger.info(f"Sequence: Using 1 roll reset from stock ({bot.rolls_stock} available)")
-            await channel.send("$rolls")
-            bot.rolls_stock -= 1
-            used_stock = True
-            await human_delay((2.0, 4.0))
-
         # 4. Perform Initial Rolls
         roll_cmd = bot.config.get("roll_command", "$wa")
         num_rolls = bot.available_rolls
@@ -168,23 +159,30 @@ async def perform_rolls(bot):
                 else:
                     await asyncio.sleep(1.0) # Minimal buffer
 
-        # 5. Extra Rolls (if $daily or $rolls stock was used)
-        if bot.daily_ready or used_stock:
-            # Check time again before starting extra rolls
-            elapsed = time.time() - sequence_start_time
-            if not is_last_hour or elapsed < ROLL_STOP_LIMIT:
-                if bot.daily_ready:
-                    logger.info("Sequence: Daily was used, requesting extra rolls via $rolls")
-                    await channel.send("$rolls")
-                    await human_delay((3.0, 5.0))
-                
-                logger.info("Sequence: Starting 10 extra rolls")
-                for i in range(10):
-                    elapsed = time.time() - sequence_start_time
-                    if is_last_hour and elapsed > ROLL_STOP_LIMIT:
-                        logger.warning(f"LAST HOUR SAFETY: Stopping extra rolls early at {elapsed:.1f}s.")
-                        break
+        # 5. Extra Rolls (if $daily or $rolls stock is available)
+        # We only use resets if NOT in the last hour to avoid expiring early rolls
+        if not is_last_hour:
+            used_reset = False
+            
+            # Use daily reset first if available
+            if bot.daily_ready:
+                logger.info("Sequence: Using roll reset from $daily")
+                await channel.send("$rolls")
+                used_reset = True
+                await human_delay((2.0, 4.0))
+            
+            # Use stock reset if no daily reset was used or if we want to use both
+            # (Keeping it to one reset per sequence for safety, but you can change this)
+            if not used_reset and bot.rolls_stock > 0:
+                logger.info(f"Sequence: Using 1 roll reset from stock ({bot.rolls_stock} available)")
+                await channel.send("$rolls")
+                bot.rolls_stock -= 1
+                used_reset = True
+                await human_delay((2.0, 4.0))
 
+            if used_reset:
+                logger.info("Sequence: Starting 10 extra rolls from reset")
+                for i in range(10):
                     bot.roll_response_event.clear()
                     await channel.send(roll_cmd)
                     
