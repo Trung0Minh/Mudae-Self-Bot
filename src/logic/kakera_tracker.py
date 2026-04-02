@@ -131,6 +131,9 @@ class KakeraTracker:
         if message.author.id != 432610292342587392:
             return
 
+        # DEBUG: Log all Mudae messages for analysis
+        logger.debug(f"Mudae message received: '{message.content}'")
+
         # Check for Claim Confirmation: "Username +142 ($k)"
         claim_match = CLAIM_CONFIRM_PATTERN.match(message.content)
         if claim_match:
@@ -142,7 +145,12 @@ class KakeraTracker:
             if self.bot.user.display_name:
                 bot_names.append(self.bot.user.display_name.lower())
             
-            if claimer_name in bot_names:
+            logger.debug(f"Claim detected: {claimer_name} got {amount}. Bot names: {bot_names}")
+
+            # Check if name matches (handling potential mentions like <@ID>)
+            is_bot_claim = claimer_name in bot_names or str(self.bot.user.id) in claimer_name
+            
+            if is_bot_claim:
                 # We claimed kakera! Find whose roll it was.
                 roller_id = None
                 
@@ -150,30 +158,38 @@ class KakeraTracker:
                 if message.reference and message.reference.message_id:
                     ref_id = message.reference.message_id
                     roller_id = self.recent_roll_owners.get(ref_id)
+                    logger.debug(f"Found roller via message reference ({ref_id}): {roller_id}")
                 
                 # Priority 2: Look at the most recent tracked roll
                 if not roller_id and self.recent_roll_owners:
-                    roller_id = list(self.recent_roll_owners.values())[-1]
+                    # Get the last added roll owner (the most recent one)
+                    recent_rolls = list(self.recent_roll_owners.items())
+                    last_msg_id, last_roller = recent_rolls[-1]
+                    roller_id = last_roller
+                    logger.debug(f"Found roller via recent history (Last roll ID {last_msg_id}): {roller_id}")
 
-                # Don't track debt to ourselves
-                if roller_id and roller_id != self.bot.user.id:
-                    self.ledger[roller_id] = self.ledger.get(roller_id, 0) + amount
-                    logger.info(f"Added {amount} kakera debt to {roller_id}")
-                    await self._save_ledger()
-                return
+                if roller_id:
+                    if roller_id != self.bot.user.id:
+                        self.ledger[roller_id] = self.ledger.get(roller_id, 0) + amount
+                        logger.info(f"SUCCESS: Added {amount} kakera debt to {roller_id}. New balance: {self.ledger[roller_id]}")
+                        await self._save_ledger()
+                    else:
+                        logger.debug("Skipping claim: Roller was the bot itself.")
+                else:
+                    logger.warning(f"FAILED to identify roller for claim of {amount} kakera. (History size: {len(self.recent_roll_owners)})")
+            return
 
-        # Check for Payment Confirmation: "500 kakera have been given to @User"
+        # Check for Payment Confirmation
         payment_match = PAYMENT_CONFIRM_PATTERN.search(message.content)
         if payment_match:
             amount = int(payment_match.group(1))
             paid_user_id = int(payment_match.group(2))
+            logger.debug(f"Payment detected: {amount} given to {paid_user_id}")
             
-            # Find the user in ledger (either by ID or by name if we can match it)
             target_key = None
             if paid_user_id in self.ledger:
                 target_key = paid_user_id
             else:
-                # Try to find by name if we have a string key
                 try:
                     user = self.bot.get_user(paid_user_id) or await self.bot.fetch_user(paid_user_id)
                     if user:
@@ -182,11 +198,13 @@ class KakeraTracker:
                             target_key = name_lower
                         elif user.display_name.lower() in self.ledger:
                             target_key = user.display_name.lower()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Could not resolve user {paid_user_id} for payment: {e}")
 
             if target_key:
                 self.ledger[target_key] -= amount
-                logger.info(f"Deducted {amount} kakera debt from {target_key}")
+                logger.info(f"SUCCESS: Deducted {amount} kakera debt from {target_key}. New balance: {self.ledger[target_key]}")
                 await self._save_ledger()
+            else:
+                logger.warning(f"FAILED to find user {paid_user_id} in debt list for payment of {amount} kakera.")
             return
