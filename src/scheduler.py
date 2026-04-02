@@ -3,6 +3,7 @@ from apscheduler.triggers.cron import CronTrigger
 import logging
 from datetime import datetime, timedelta
 import pytz
+from src.logic.settlement import settle_all_debts
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,22 @@ class MudaeScheduler:
             CronTrigger(minute=0, second=0),
             id="hourly_roll"
         )
+
+        # Trigger Weekly Settlement (Sunday at 12:00:00 PM)
+        self.scheduler.add_job(
+            self.on_weekly_settlement,
+            CronTrigger(day_of_week='sun', hour=12, minute=0, second=0),
+            id="weekly_settlement"
+        )
+
         self.scheduler.start()
         logger.info(f"Scheduler started with timezone: {self.timezone}")
         
         # Log when the next run is
-        next_run = self.scheduler.get_job("hourly_roll").next_run_time
-        logger.info(f"Next scheduled roll at: {next_run}")
+        next_roll = self.scheduler.get_job("hourly_roll").next_run_time
+        next_settle = self.scheduler.get_job("weekly_settlement").next_run_time
+        logger.info(f"Next scheduled roll at: {next_roll}")
+        logger.info(f"Next scheduled settlement at: {next_settle}")
 
     async def on_hour_trigger(self):
         """Callback for when a new hour starts."""
@@ -59,6 +70,11 @@ class MudaeScheduler:
         logger.info("DELAYED STRIKE WAKING UP: Starting roll sequence now!")
         from src.logic.roller import perform_rolls
         await perform_rolls(self.bot)
+
+    async def on_weekly_settlement(self):
+        """Callback for weekly debt repayment."""
+        logger.info("AUTO-SETTLEMENT: Starting weekly debt repayment sequence...")
+        await settle_all_debts(self.bot)
 
     def shutdown(self):
         """Stops the scheduler."""
