@@ -100,6 +100,11 @@ async def handle_mudae_message(bot, message):
     if total_buttons == 1 and target_button:
         # --- SNIFFING FILTER ---
         user_id, is_own_roll = identify_roll_owner(bot, message)
+        
+        # Track roll owner for kakera debt tracking
+        if user_id:
+            bot.kakera_tracker.track_roll(message.id, user_id)
+
         claiming_cfg = bot.config.get("claiming", {})
         sniffing_enabled = claiming_cfg.get("sniffing_enabled", True)
         blacklist = claiming_cfg.get("sniff_blacklist", [])
@@ -146,6 +151,11 @@ async def handle_mudae_message(bot, message):
 
         # --- SNIFFING FILTER ---
         user_id, is_own_roll = identify_roll_owner(bot, message)
+        
+        # Track roll owner for kakera debt tracking
+        if user_id:
+            bot.kakera_tracker.track_roll(message.id, user_id)
+
         claiming_cfg = bot.config.get("claiming", {})
         sniffing_enabled = claiming_cfg.get("sniffing_enabled", True)
         blacklist = claiming_cfg.get("sniff_blacklist", [])
