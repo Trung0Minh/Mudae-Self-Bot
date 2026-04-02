@@ -120,8 +120,8 @@ class KakeraTracker:
 
     async def handle_message(self, message):
         """Handle messages for claims, payments, and commands."""
-        # 1. Check for commands in the tracker channel or any channel if it's the bot's own message
-        if message.channel.id == self.channel_id:
+        # 1. Check for commands in the tracker channel or target channel
+        if message.channel.id == self.channel_id or message.channel.id == self.bot.target_channel_id:
             if message.content.lower().startswith("$kstats"):
                 await message.channel.send(f"**Current Kakera Debt:**\n{self._format_ledger()}")
                 return
