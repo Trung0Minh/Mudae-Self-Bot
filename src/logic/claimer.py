@@ -17,46 +17,54 @@ ROLL_INDICATOR_PATTERN = re.compile(r"React with any emoji to claim!", re.IGNORE
 def identify_roll_owner(bot, message):
     """
     Identifies the owner of a Mudae roll.
-    Returns: (user_id, is_own_roll)
+    Returns: (user_id_or_name, is_own_roll)
     """
     is_own_roll = False
     user_id = None
 
-    # Check Interaction (for slash commands/buttons)
+    # 1. Check Interaction (for slash commands/buttons)
     if message.interaction:
         user_id = message.interaction.user.id
+        logger.debug(f"Owner identified via Interaction: {user_id}")
         if user_id == bot.user.id:
             is_own_roll = True
         return user_id, is_own_roll
 
-    # Check Embed Footer (for standard $wa rolls)
+    # 2. Check Embed Footer (for standard and slash rolls)
     if message.embeds and message.embeds[0].footer and message.embeds[0].footer.text:
-        footer_text = message.embeds[0].footer.text.lower()
+        footer_text = message.embeds[0].footer.text.strip()
+        footer_lower = footer_text.lower()
         
         # Check against our own name/display name
         user_names = [bot.user.name.lower()]
         if bot.user.display_name:
             user_names.append(bot.user.display_name.lower())
         
-        if any(name in footer_text for name in user_names):
+        if any(name in footer_lower for name in user_names):
             is_own_roll = True
             user_id = bot.user.id
             return user_id, is_own_roll
             
-        # Fallback: Extract the username from the footer (usually "Roll by User")
-        # Mudae usually formats footer as "Roll by Username" or "1/10" (for warnings)
-        if "roll by " in footer_text:
+        # Pattern A: "Roll by Username"
+        if "roll by " in footer_lower:
             user_id = footer_text.split("roll by ")[1].strip()
-        elif "rolls left" in footer_text or "roll left" in footer_text:
-            # If it's a "rolls left" warning and we are currently rolling, it's likely ours
-            if bot.current_rolling_task and not bot.current_rolling_task.done():
-                is_own_roll = True
-                user_id = bot.user.id
+            return user_id, is_own_roll
+            
+        # Pattern B: Just "Username" (Common in Slash Commands)
+        # We ignore footers that look like roll counts (e.g., "1/10" or "15 rolls left")
+        if not any(x in footer_lower for x in ["/", "rolls left", "roll left"]):
+            # If it's a single word or short phrase, it's likely the username
+            user_id = footer_text
+            logger.debug(f"Owner identified via raw Footer: {user_id}")
+            return user_id, is_own_roll
         
-    # Final Fallback: If we are rolling and there's no clear owner, assume it's ours
-    if not user_id and bot.current_rolling_task and not bot.current_rolling_task.done():
+        logger.debug(f"Unrecognized footer format: '{footer_text}'")
+
+    # 3. Final Fallback: If we are the ones rolling
+    if bot.current_rolling_task and not bot.current_rolling_task.done():
         is_own_roll = True
         user_id = bot.user.id
+        return user_id, is_own_roll
 
     return user_id, is_own_roll
 
