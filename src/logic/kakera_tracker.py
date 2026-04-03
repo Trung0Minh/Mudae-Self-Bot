@@ -12,6 +12,9 @@ CLAIM_CONFIRM_PATTERN = re.compile(r".*?([^\s\n]+)\s+\+(\d+)\s+\(\$k\)", re.IGNO
 # Regex for kakera payment confirmation: "@user just gifted 500 💎 to @target"
 PAYMENT_CONFIRM_PATTERN = re.compile(r"<@!?\d+>\s+just\s+gifted\s+(\d+)\s+.*?\s+to\s+<@!?(\d+)>", re.IGNORECASE)
 
+# Regex to detect roll commands (e.g., $wa, $ha, $ma, $mg, /wa, etc.)
+ROLL_COMMAND_PATTERN = re.compile(r"^[$/]([whma][ag]|wa|ha|ma|mg|w|h|m)", re.IGNORECASE)
+
 LEDGER_HEADER = "--- KAKERA DEBT TRACKER ---"
 LEDGER_FOOTER = "---------------------------"
 
@@ -22,10 +25,6 @@ class KakeraTracker:
         # user_id (int) or username (str) -> amount (int)
         self.ledger: Dict[Union[int, str], int] = {} 
         self.pinned_message = None
-        # Maps message_id of a roll to the user_id/username who rolled it
-        self.recent_roll_owners: Dict[int, Union[int, str]] = {}
-        # Maximum number of recent rolls to track to prevent memory leak
-        self.MAX_TRACKED_ROLLS = 100
 
     async def initialize(self):
         """Load the ledger from the pinned message in the tracker channel."""
@@ -103,21 +102,55 @@ class KakeraTracker:
             except Exception as e:
                 logger.error(f"Failed to update pinned ledger: {e}")
 
-    def track_roll(self, message_id: int, owner: Union[int, str]):
-        """Record who rolled a character."""
-        # Normalize owner
+    async def find_roller_username(self, confirmation_msg):
+        """
+        Trace back through history to find the person who triggered the roll.
+        1. Find the nearest preceding Mudae message with a button.
+        2. Find the nearest roll command ($wa, etc.) before that.
+        """
         try:
-            owner = int(owner)
-        except (ValueError, TypeError):
-            owner = str(owner).lower()
+            # Look back at last 20 messages
+            history = await confirmation_msg.channel.history(limit=20, before=confirmation_msg).flatten()
             
-        self.recent_roll_owners[message_id] = owner
-        
-        # Cleanup old rolls
-        if len(self.recent_roll_owners) > self.MAX_TRACKED_ROLLS:
-            # Pop the oldest key (first one in dict)
-            oldest_key = next(iter(self.recent_roll_owners))
-            self.recent_roll_owners.pop(oldest_key)
+            button_msg = None
+            # Step 1: Find the roll message (Mudae message with a button)
+            for msg in history:
+                if msg.author.id == 432610292342587392 and msg.components:
+                    # Check if any component is a button (kakera or character)
+                    has_button = False
+                    for row in msg.components:
+                        for comp in row.children:
+                            if isinstance(comp, discord.Button):
+                                has_button = True
+                                break
+                    if has_button:
+                        button_msg = msg
+                        break
+            
+            if not button_msg:
+                return None
+
+            # Step 2: Find the nearest roll command BEFORE that button message
+            # We look in the history starting from the button message
+            found_button = False
+            for msg in history:
+                if msg.id == button_msg.id:
+                    found_button = True
+                    continue
+                
+                if found_button:
+                    # Ignore other Mudae messages or bot messages
+                    if msg.author.id == self.bot.user.id or msg.author.id == 432610292342587392:
+                        continue
+                    
+                    # Check if the message content looks like a roll command
+                    if ROLL_COMMAND_PATTERN.match(msg.content.strip()):
+                        return msg.author.name
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error tracing back roller: {e}")
+            return None
 
     async def handle_message(self, message):
         """Handle messages for claims, payments, and commands."""
@@ -132,9 +165,6 @@ class KakeraTracker:
         if message.author.id != 432610292342587392:
             return
 
-        # DEBUG: Log all Mudae messages for analysis
-        logger.debug(f"Mudae message received: '{message.content}'")
-
         # Check for Claim Confirmation: "Username +142 ($k)"
         claim_match = CLAIM_CONFIRM_PATTERN.match(message.content)
         if claim_match:
@@ -146,38 +176,24 @@ class KakeraTracker:
             if self.bot.user.display_name:
                 bot_names.append(self.bot.user.display_name.lower())
             
-            logger.debug(f"Claim detected: {claimer_name} got {amount}. Bot names: {bot_names}")
-
-            # Check if name matches (handling potential mentions like <@ID>)
             is_bot_claim = claimer_name in bot_names or str(self.bot.user.id) in claimer_name
             
             if is_bot_claim:
-                # We claimed kakera! Find whose roll it was.
-                roller_id = None
+                # Trace back to find the real roller
+                roller_name = await self.find_roller_username(message)
                 
-                # Priority 1: Check if it's a reply to a known roll
-                if message.reference and message.reference.message_id:
-                    ref_id = message.reference.message_id
-                    roller_id = self.recent_roll_owners.get(ref_id)
-                    logger.debug(f"Found roller via message reference ({ref_id}): {roller_id}")
-                
-                # Priority 2: Look at the most recent tracked roll
-                if not roller_id and self.recent_roll_owners:
-                    # Get the last added roll owner (the most recent one)
-                    recent_rolls = list(self.recent_roll_owners.items())
-                    last_msg_id, last_roller = recent_rolls[-1]
-                    roller_id = last_roller
-                    logger.debug(f"Found roller via recent history (Last roll ID {last_msg_id}): {roller_id}")
-
-                if roller_id:
-                    if roller_id != self.bot.user.id:
-                        self.ledger[roller_id] = self.ledger.get(roller_id, 0) + amount
-                        logger.info(f"SUCCESS: Added {amount} kakera debt to {roller_id}. New balance: {self.ledger[roller_id]}")
+                if roller_name:
+                    # Check if roller is the bot itself (ignore own rolls)
+                    is_own = roller_name.lower() in bot_names
+                    
+                    if not is_own:
+                        self.ledger[roller_name] = self.ledger.get(roller_name, 0) + amount
+                        logger.info(f"TRACE-BACK SUCCESS: Added {amount} kakera debt to {roller_name}. New balance: {self.ledger[roller_name]}")
                         await self._save_ledger()
                     else:
                         logger.debug("Skipping claim: Roller was the bot itself.")
                 else:
-                    logger.warning(f"FAILED to identify roller for claim of {amount} kakera. (History size: {len(self.recent_roll_owners)})")
+                    logger.warning(f"TRACE-BACK FAILED to identify roller for claim of {amount} kakera.")
             return
 
         # Check for Payment Confirmation
@@ -185,7 +201,6 @@ class KakeraTracker:
         if payment_match:
             amount = int(payment_match.group(1))
             paid_user_id = int(payment_match.group(2))
-            logger.debug(f"Payment detected: {amount} given to {paid_user_id}")
             
             target_key = None
             if paid_user_id in self.ledger:
@@ -199,13 +214,11 @@ class KakeraTracker:
                             target_key = name_lower
                         elif user.display_name.lower() in self.ledger:
                             target_key = user.display_name.lower()
-                except Exception as e:
-                    logger.debug(f"Could not resolve user {paid_user_id} for payment: {e}")
+                except Exception:
+                    pass
 
             if target_key:
                 self.ledger[target_key] -= amount
-                logger.info(f"SUCCESS: Deducted {amount} kakera debt from {target_key}. New balance: {self.ledger[target_key]}")
+                logger.info(f"PAYMENT SUCCESS: Deducted {amount} kakera debt from {target_key}. New balance: {self.ledger[target_key]}")
                 await self._save_ledger()
-            else:
-                logger.warning(f"FAILED to find user {paid_user_id} in debt list for payment of {amount} kakera.")
             return

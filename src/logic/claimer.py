@@ -25,7 +25,6 @@ def identify_roll_owner(bot, message):
     # 1. Check Interaction (for slash commands/buttons)
     if message.interaction:
         user_id = message.interaction.user.id
-        logger.debug(f"Owner identified via Interaction: {user_id}")
         if user_id == bot.user.id:
             is_own_roll = True
         return user_id, is_own_roll
@@ -37,7 +36,7 @@ def identify_roll_owner(bot, message):
         
         # SKIP "Belongs to" - This is the character owner, NOT the person who rolled.
         if "belongs to " in footer_lower:
-            logger.debug(f"Skipping 'Belongs to' footer: {footer_text}")
+            pass 
         else:
             # Check against our own name/display name
             user_names = [bot.user.name.lower()]
@@ -57,12 +56,8 @@ def identify_roll_owner(bot, message):
             # Pattern B: Just "Username" (Common in Slash Commands)
             # We ignore footers that look like roll counts (e.g., "1/10" or "15 rolls left")
             if not any(x in footer_lower for x in ["/", "rolls left", "roll left"]):
-                # If it's a single word or short phrase, it's likely the username
                 user_id = footer_text
-                logger.debug(f"Owner identified via raw Footer: {user_id}")
                 return user_id, is_own_roll
-        
-        logger.debug(f"Footer did not yield owner: '{footer_text}'")
 
     # 3. Final Fallback: If we are the ones rolling
     if bot.current_rolling_task and not bot.current_rolling_task.done():
@@ -99,7 +94,6 @@ async def handle_mudae_message(bot, message):
             return
 
     # 2. Universal Button Clicker (Single Button Logic)
-    # Click immediately if there is exactly one button
     total_buttons = 0
     target_button = None
     if message.components:
@@ -113,10 +107,6 @@ async def handle_mudae_message(bot, message):
         # --- SNIFFING FILTER ---
         user_id, is_own_roll = identify_roll_owner(bot, message)
         
-        # Track roll owner for kakera debt tracking
-        if user_id:
-            bot.kakera_tracker.track_roll(message.id, user_id)
-
         claiming_cfg = bot.config.get("claiming", {})
         sniffing_enabled = claiming_cfg.get("sniffing_enabled", True)
         blacklist = claiming_cfg.get("sniff_blacklist", [])
@@ -124,14 +114,12 @@ async def handle_mudae_message(bot, message):
         should_interact = is_own_roll or (sniffing_enabled and str(user_id) not in [str(b) for b in blacklist])
 
         if should_interact:
-            logger.info(f"BUTTON DETECTED! Clicking immediately... (Owner: {user_id}, Own: {is_own_roll})")
+            logger.info("BUTTON DETECTED! Clicking immediately...")
             try:
                 await target_button.click()
                 return 
             except Exception as e:
                 logger.error(f"Failed to click button: {e}")
-        else:
-            logger.debug(f"Ignoring button roll from {user_id} (Sniffing disabled or blacklisted)")
 
     if not message.embeds:
         return
@@ -162,11 +150,7 @@ async def handle_mudae_message(bot, message):
         # --- SNIFFING FILTER ---
         user_id, is_own_roll = identify_roll_owner(bot, message)
         
-        logger.info(f"ROLL DETECTED: {character_name} (Roller: {user_id}, Own: {is_own_roll})")
-
-        # Track roll owner for kakera debt tracking
-        if user_id:
-            bot.kakera_tracker.track_roll(message.id, user_id)
+        logger.info(f"ROLL DETECTED: {character_name}")
 
         claiming_cfg = bot.config.get("claiming", {})
         sniffing_enabled = claiming_cfg.get("sniffing_enabled", True)
@@ -186,7 +170,6 @@ async def handle_mudae_message(bot, message):
 
         # 4. Kakera Check via $im (Only for OUR rolls)
         if is_own_roll:
-            # Use the full name provided by Mudae (preserving parentheses)
             clean_name = character_name.strip()
             logger.info(f"OWN ROLL: {character_name}. Sending $im '{clean_name}' to check kakera...")
             bot.pending_kakera_checks[clean_name.lower()] = message
