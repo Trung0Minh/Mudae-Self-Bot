@@ -5,11 +5,12 @@ from typing import Dict, Union
 
 logger = logging.getLogger(__name__)
 
-# Regex for kakera claim confirmation: "Username +142 ($k)"
-CLAIM_CONFIRM_PATTERN = re.compile(r"^([^ \n]+)\s+\+(\d+)\s+\(\$k\)", re.IGNORECASE)
+# Regex for kakera claim confirmation: Skip any emoji/prefix at the start, then match "Username +142 ($k)"
+# Using .*? to lazily skip potential emojis/spaces at the start
+CLAIM_CONFIRM_PATTERN = re.compile(r".*?([^\s\n]+)\s+\+(\d+)\s+\(\$k\)", re.IGNORECASE)
 
-# Regex for kakera payment confirmation: "500 kakera have been given to @User"
-PAYMENT_CONFIRM_PATTERN = re.compile(r"(\d+)\s+kakera\s+have\s+been\s+given\s+to\s+<@!?(\d+)>", re.IGNORECASE)
+# Regex for kakera payment confirmation: "@user just gifted 500 💎 to @target"
+PAYMENT_CONFIRM_PATTERN = re.compile(r"<@!?\d+>\s+just\s+gifted\s+(\d+)\s+.*?\s+to\s+<@!?(\d+)>", re.IGNORECASE)
 
 LEDGER_HEADER = "--- KAKERA DEBT TRACKER ---"
 LEDGER_FOOTER = "---------------------------"

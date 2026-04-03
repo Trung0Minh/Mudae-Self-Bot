@@ -35,30 +35,34 @@ def identify_roll_owner(bot, message):
         footer_text = message.embeds[0].footer.text.strip()
         footer_lower = footer_text.lower()
         
-        # Check against our own name/display name
-        user_names = [bot.user.name.lower()]
-        if bot.user.display_name:
-            user_names.append(bot.user.display_name.lower())
-        
-        if any(name in footer_lower for name in user_names):
-            is_own_roll = True
-            user_id = bot.user.id
-            return user_id, is_own_roll
+        # SKIP "Belongs to" - This is the character owner, NOT the person who rolled.
+        if "belongs to " in footer_lower:
+            logger.debug(f"Skipping 'Belongs to' footer: {footer_text}")
+        else:
+            # Check against our own name/display name
+            user_names = [bot.user.name.lower()]
+            if bot.user.display_name:
+                user_names.append(bot.user.display_name.lower())
             
-        # Pattern A: "Roll by Username"
-        if "roll by " in footer_lower:
-            user_id = footer_text.split("roll by ")[1].strip()
-            return user_id, is_own_roll
-            
-        # Pattern B: Just "Username" (Common in Slash Commands)
-        # We ignore footers that look like roll counts (e.g., "1/10" or "15 rolls left")
-        if not any(x in footer_lower for x in ["/", "rolls left", "roll left"]):
-            # If it's a single word or short phrase, it's likely the username
-            user_id = footer_text
-            logger.debug(f"Owner identified via raw Footer: {user_id}")
-            return user_id, is_own_roll
+            if any(name in footer_lower for name in user_names):
+                is_own_roll = True
+                user_id = bot.user.id
+                return user_id, is_own_roll
+                
+            # Pattern A: "Roll by Username"
+            if "roll by " in footer_lower:
+                user_id = footer_text.split("roll by ")[1].strip()
+                return user_id, is_own_roll
+                
+            # Pattern B: Just "Username" (Common in Slash Commands)
+            # We ignore footers that look like roll counts (e.g., "1/10" or "15 rolls left")
+            if not any(x in footer_lower for x in ["/", "rolls left", "roll left"]):
+                # If it's a single word or short phrase, it's likely the username
+                user_id = footer_text
+                logger.debug(f"Owner identified via raw Footer: {user_id}")
+                return user_id, is_own_roll
         
-        logger.debug(f"Unrecognized footer format: '{footer_text}'")
+        logger.debug(f"Footer did not yield owner: '{footer_text}'")
 
     # 3. Final Fallback: If we are the ones rolling
     if bot.current_rolling_task and not bot.current_rolling_task.done():
