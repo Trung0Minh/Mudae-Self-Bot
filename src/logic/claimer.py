@@ -159,11 +159,11 @@ async def handle_mudae_message(bot, message):
         elif embed.title:
             character_name = embed.title
             
-        logger.info(f"ROLL DETECTED: {character_name}")
-
         # --- SNIFFING FILTER ---
         user_id, is_own_roll = identify_roll_owner(bot, message)
         
+        logger.info(f"ROLL DETECTED: {character_name} (Roller: {user_id}, Own: {is_own_roll})")
+
         # Track roll owner for kakera debt tracking
         if user_id:
             bot.kakera_tracker.track_roll(message.id, user_id)
