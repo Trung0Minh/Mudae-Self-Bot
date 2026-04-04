@@ -9,28 +9,43 @@ from src.logic.timer_manager import check_timers
 logger = logging.getLogger(__name__)
 
 # Safety constants for the 30-second reaction window
-ROLL_STOP_LIMIT = 20.0      # Stop rolling after 20 seconds
-AUDIT_STOP_LIMIT = 24.0     # Stop waiting for $im after 24 seconds
-HARD_CLAIM_DEADLINE = 25.5  # Final deadline to send the claim reaction
+ROLL_STOP_LIMIT = 25.0      # Stop rolling after 25 seconds
+AUDIT_STOP_LIMIT = 25.0     # Stop waiting for $im after 25 seconds
+HARD_CLAIM_DEADLINE = 28  # Final deadline to send the claim reaction
+
+def get_bot_timezone(bot):
+    """Utility to get the pytz timezone object from bot config."""
+    tz_str = bot.config.get("timing", {}).get("timezone", "UTC")
+    return pytz.timezone(tz_str)
+
+def get_claim_resets(bot):
+    """Generates the list of claim reset hours based on config."""
+    claiming_cfg = bot.config.get("claiming", {})
+    interval = claiming_cfg.get("claim_reset_interval", 3)
+    start_hour = claiming_cfg.get("claim_reset_start", 0)
+    
+    # Generate resets: e.g., if start=1 and interval=3, resets=[1, 4, 7, 10, 13, 16, 19, 22]
+    resets = []
+    for i in range(24 // interval):
+        hour = (start_hour + (i * interval)) % 24
+        resets.append(hour)
+    return sorted(resets)
 
 def get_current_interval_start(bot):
     """Calculates the start time of the current Mudae claim interval in the configured timezone."""
-    RESETS = [1, 4, 7, 10, 13, 16, 19, 22]
-    
-    # Get timezone from config
-    tz_str = bot.config.get("timing", {}).get("timezone", "UTC")
-    tz = pytz.timezone(tz_str)
+    resets = get_claim_resets(bot)
+    tz = get_bot_timezone(bot)
     now_local = datetime.now(tz)
     current_hour = now_local.hour
     
     # Find the reset hour that started this interval
-    if current_hour < RESETS[0]:
-        interval_hour = RESETS[-1]
+    if current_hour < resets[0]:
+        interval_hour = resets[-1]
         # It started yesterday in local time
         start_time = now_local - timedelta(days=1)
     else:
-        interval_hour = RESETS[0]
-        for r in RESETS:
+        interval_hour = resets[0]
+        for r in resets:
             if r <= current_hour:
                 interval_hour = r
             else:
@@ -41,24 +56,24 @@ def get_current_interval_start(bot):
 
 def is_last_hour_of_interval(bot):
     """Checks if the current hour in the configured timezone is the last one before a claim reset."""
-    RESETS = [1, 4, 7, 10, 13, 16, 19, 22]
-    
-    # Get timezone from config
-    tz_str = bot.config.get("timing", {}).get("timezone", "UTC")
-    tz = pytz.timezone(tz_str)
+    resets = get_claim_resets(bot)
+    tz = get_bot_timezone(bot)
     now_local = datetime.now(tz)
     current_hour = now_local.hour
     
     # Find the next reset
-    next_reset = RESETS[0]
-    for r in RESETS:
+    next_reset = resets[0]
+    for r in resets:
         if r > current_hour:
             next_reset = r
             break
     
     # Special case for the very last reset of the day
-    if current_hour >= RESETS[-1]:
-        return current_hour == (24 + RESETS[0] - 1) # e.g. 23 if RESETS[0] is 0
+    if current_hour >= resets[-1]:
+        # If the first reset is 0, then the last hour of the day (23) is the last hour.
+        # If the first reset is 1, then hour 0 is the last hour (of the previous day's last interval).
+        # General formula: (next_reset - 1) % 24
+        return current_hour == (24 + resets[0] - 1) % 24
     
     return current_hour == (next_reset - 1)
 
@@ -90,10 +105,11 @@ async def perform_rolls(bot):
 
     # 2. Check if claim is even possible
     current_interval = get_current_interval_start(bot)
+    tz_str = bot.config.get("timing", {}).get("timezone", "UTC")
     logger.debug(f"Current claim interval starts at: {current_interval.strftime('%Y-%m-%d %H:%M')}")
 
     if bot.last_claim_interval_start and bot.last_claim_interval_start == current_interval:
-        logger.info(f"Already claimed in this interval (Started at {current_interval.strftime('%H:%M')} {bot.config.get('timing', {}).get('timezone')}).")
+        logger.info(f"Already claimed in this interval (Started at {current_interval.strftime('%H:%M')} {tz_str}).")
         if not bot.config.get("roll_without_claim", False):
             logger.info("roll_without_claim is False. Ending sequence.")
             return
@@ -230,9 +246,10 @@ async def perform_rolls(bot):
                 from src.logic.claimer import perform_claim
                 await perform_claim(bot, best_roll["message"])
                 
-                # --- DIVORCE FOR KAKERA (Under 200 Rule) ---
-                if best_kakera < 200:
-                    logger.info(f"KAKERA < 200 ({best_kakera}): Initiating divorce sequence...")
+                # --- DIVORCE FOR KAKERA (Under Threshold Rule) ---
+                min_divorce = bot.config.get("claiming", {}).get("min_divorce_kakera", 200)
+                if best_kakera < min_divorce:
+                    logger.info(f"KAKERA < {min_divorce} ({best_kakera}): Initiating divorce sequence...")
                     
                     bot.is_divorcing = True
                     try:
@@ -246,7 +263,7 @@ async def perform_rolls(bot):
                     finally:
                         bot.is_divorcing = False
                 else:
-                    logger.info(f"KAKERA >= 200 ({best_kakera}): Keeping character.")
+                    logger.info(f"KAKERA >= {min_divorce} ({best_kakera}): Keeping character.")
             else:
                 logger.info("LAST HOUR FALLBACK: No rolls were captured in this sequence.")
 
