@@ -114,6 +114,13 @@ async def handle_mudae_message(bot, message):
         should_interact = is_own_roll or (sniffing_enabled and str(user_id) not in [str(b) for b in blacklist])
 
         if should_interact:
+            # New Condition: Only click others' buttons if it's a "Wished by" message
+            if not is_own_roll:
+                content_lower = message.content.lower()
+                if "wished by" not in content_lower:
+                    logger.debug(f"Skipping single button on someone else's roll ({user_id}) - 'wished by' not found.")
+                    return
+
             logger.info("BUTTON DETECTED! Clicking immediately...")
             try:
                 await target_button.click()
