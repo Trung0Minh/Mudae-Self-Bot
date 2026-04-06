@@ -136,16 +136,17 @@ async def handle_mudae_message(bot, message):
     description = embed.description if embed.description else ""
     desc_lower = description.lower()
     
-    # Check fields as well for "Animanga roulette"
+    # Check fields and footer for "Animanga roulette"
     fields_text = " ".join([f.value for f in embed.fields]).lower() if embed.fields else ""
-    full_text_lower = desc_lower + " " + fields_text
+    footer_text = embed.footer.text.lower() if embed.footer and embed.footer.text else ""
+    full_text_lower = desc_lower + " " + fields_text + " " + footer_text
 
     # Identify if it's a Roll or an Info ($im) message
     is_roll = ROLL_INDICATOR_PATTERN.search(desc_lower) and embed.image
     is_info = "animanga roulette" in full_text_lower and not ROLL_INDICATOR_PATTERN.search(desc_lower)
 
-    if is_roll or is_info:
-        # Signal that we received a response for a roll (or $im check)
+    if is_roll:
+        # Signal that we received a response for a roll
         bot.roll_response_event.set()
 
     if is_roll:

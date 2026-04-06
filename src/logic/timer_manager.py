@@ -102,4 +102,7 @@ async def handle_timer_response(bot, message):
     else:
         bot.daily_ready = False
 
+    if is_timer_info:
+        bot.roll_response_event.set()
+
     return is_timer_info
