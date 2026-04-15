@@ -83,6 +83,7 @@ async def handle_mudae_message(bot, message):
             logger.info(f"CLAIM CONFIRMED: Message: '{message.content}'")
             from src.logic.roller import get_current_interval_start
             bot.last_claim_interval_start = get_current_interval_start(bot)
+            bot.claim_ready = False # Update state immediately
 
             # Stop any active roll sequence immediately, UNLESS we are in the middle of a divorce sequence
             if bot.current_rolling_task and not bot.current_rolling_task.done():

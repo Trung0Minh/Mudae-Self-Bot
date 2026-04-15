@@ -90,18 +90,16 @@ async def wait_for_mudae_response(bot, timeout=8.0):
 async def perform_rolls(bot):
     """Unified roll sequence: $dk -> $daily -> (Rolls) -> $rolls -> (Extra Rolls)"""
     # 1. Check $tu first to refresh ALL states
+    bot.roll_response_event.clear()
     await check_timers(bot)
     
-    # Wait for response with multiple small checks to be more responsive
-    response_received = False
-    for i in range(15): # 15s total max wait
-        await asyncio.sleep(1)
-        if bot.available_rolls > 0 or bot.claim_ready: # Simple heuristic to see if we got an update
-            response_received = True
-            break
-            
-    if not response_received:
-        logger.warning("No $tu response detected after 15s. Proceeding with existing state.")
+    # Wait for response
+    try:
+        await asyncio.wait_for(bot.roll_response_event.wait(), timeout=12.0)
+    except asyncio.TimeoutError:
+        logger.warning("No $tu response detected after 12s. Proceeding with existing state.")
+    finally:
+        bot.roll_response_event.clear()
 
     # 2. Check if claim is even possible
     current_interval = get_current_interval_start(bot)
