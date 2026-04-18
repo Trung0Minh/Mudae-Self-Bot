@@ -36,6 +36,8 @@ class MudaeBot(commands.Bot):
         self.roll_response_event = asyncio.Event()
         # To prevent cancellation during the divorce sequence
         self.is_divorcing = False
+        # Tracks the last time a roll command was sent
+        self.last_roll_time = 0
         
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")

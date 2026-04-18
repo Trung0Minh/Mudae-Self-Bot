@@ -1,6 +1,7 @@
 import logging
 import discord
 import re
+import time
 from src.utils.humanizer import human_delay
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,11 @@ def identify_roll_owner(bot, message):
                 return user_id, is_own_roll
 
     # 3. Final Fallback: If we are the ones rolling
-    if bot.current_rolling_task and not bot.current_rolling_task.done():
+    # We check if the rolling task is still active OR if we sent a roll command very recently (fallback for lag)
+    is_active_rolling = bot.current_rolling_task and not bot.current_rolling_task.done()
+    recently_rolled = (time.time() - bot.last_roll_time) < 30.0 # Match ROLL_STOP_LIMIT
+
+    if is_active_rolling or recently_rolled:
         is_own_roll = True
         user_id = bot.user.id
         return user_id, is_own_roll
@@ -125,6 +130,8 @@ async def handle_mudae_message(bot, message):
 
             logger.info("BUTTON DETECTED! Clicking immediately...")
             try:
+                # Signal the roller to continue immediately
+                bot.roll_response_event.set()
                 await target_button.click()
                 return 
             except Exception as e:
@@ -143,14 +150,18 @@ async def handle_mudae_message(bot, message):
     full_text_lower = desc_lower + " " + fields_text + " " + footer_text
 
     # Identify if it's a Roll or an Info ($im) message
-    is_roll = ROLL_INDICATOR_PATTERN.search(desc_lower) and embed.image
-    is_info = "animanga roulette" in full_text_lower and not ROLL_INDICATOR_PATTERN.search(desc_lower)
+    # is_claimable_roll matches only unclaimed characters
+    is_claimable_roll = ROLL_INDICATOR_PATTERN.search(desc_lower) and embed.image
+    # is_info matches $im responses
+    is_info = "animanga roulette" in full_text_lower and not is_claimable_roll
+    # is_any_roll matches any character roll (claimed or unclaimed) to unblock the roller
+    is_any_roll = is_claimable_roll or ("belongs to " in footer_text and embed.image) or (embed.image and not is_info)
 
-    if is_roll:
+    if is_any_roll:
         # Signal that we received a response for a roll
         bot.roll_response_event.set()
 
-    if is_roll:
+    if is_claimable_roll:
         character_name = "Unknown"
         if embed.author:
             character_name = embed.author.name

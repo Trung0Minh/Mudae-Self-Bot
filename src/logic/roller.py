@@ -9,9 +9,9 @@ from src.logic.timer_manager import check_timers
 logger = logging.getLogger(__name__)
 
 # Safety constants for the 30-second reaction window
-ROLL_STOP_LIMIT = 25.0      # Stop rolling after 25 seconds
-AUDIT_STOP_LIMIT = 25.0     # Stop waiting for $im after 25 seconds
-HARD_CLAIM_DEADLINE = 28  # Final deadline to send the claim reaction
+ROLL_STOP_LIMIT = 30.0      # Stop rolling after 30 seconds
+AUDIT_STOP_LIMIT = 30.0     # Stop waiting for $im after 30 seconds
+HARD_CLAIM_DEADLINE = 33  # Final deadline to send the claim reaction
 
 def get_bot_timezone(bot):
     """Utility to get the pytz timezone object from bot config."""
@@ -127,6 +127,7 @@ async def perform_rolls(bot):
     # Store this task early so claimer knows we are rolling
     bot.current_rolling_task = asyncio.current_task()
     bot.current_sequence_rolls = [] # Reset for this sequence
+    bot.pending_kakera_checks = {}  # Clear stale state from previous hour
     
     is_last_hour = is_last_hour_of_interval(bot)
     if is_last_hour:
@@ -161,6 +162,7 @@ async def perform_rolls(bot):
                     break
 
                 bot.roll_response_event.clear()
+                bot.last_roll_time = time.time()
                 await channel.send(roll_cmd)
                 bot.available_rolls -= 1
                 
@@ -198,6 +200,7 @@ async def perform_rolls(bot):
                 logger.info("Sequence: Starting 10 extra rolls from reset")
                 for i in range(10):
                     bot.roll_response_event.clear()
+                    bot.last_roll_time = time.time()
                     await channel.send(roll_cmd)
                     
                     # Wait for Mudae to respond before next roll
@@ -273,6 +276,5 @@ async def perform_rolls(bot):
         bot.available_rolls = 0 
         bot.current_rolling_task = None
         bot.current_sequence_rolls = []
-        # Clear pending checks so they don't leak into the next hour
-        bot.pending_kakera_checks = {} 
+        # CLEAR pending checks NO LONGER HERE to allow late responses
         logger.info("Unified roll sequence finished.")
